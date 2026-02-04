@@ -60,6 +60,10 @@ This project is built with:
 - shadcn-ui
 - Tailwind CSS
 
+## Configuração da BRAPI
+
+Para usar a BRAPI, defina a variável `VITE_BRAPI_TOKEN` no arquivo `.env` com a sua chave. O app já está pronto para consumir a API assim que a chave for informada.
+
 ## How can I deploy this project?
 
 Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
