@@ -20,6 +20,7 @@ export interface SettingsState {
   squeezePercentile: number;
   updateInterval: number;
   dataProvider: string;
+  brapiToken: string;
   confidenceWeights: {
     squeeze: number;
     smaCross: number;
@@ -37,6 +38,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   squeezePercentile: 10,
   updateInterval: 15,
   dataProvider: 'brapi',
+  brapiToken: 'mgXc96mbqF19ext2pfiWUs',
   confidenceWeights: {
     squeeze: 25,
     smaCross: 25,

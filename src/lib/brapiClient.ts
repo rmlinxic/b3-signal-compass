@@ -1,14 +1,31 @@
 import { Bar } from '@/types/market';
 
 const BRAPI_BASE_URL = 'https://brapi.dev/api';
-const BRAPI_TOKEN = import.meta.env.VITE_BRAPI_TOKEN as string | undefined;
+const SETTINGS_STORAGE_KEY = 'b3.settings';
+
+const getStoredBrapiToken = (): string | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { brapiToken?: string };
+    const token = parsed?.brapiToken?.trim();
+    return token || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const getBrapiToken = (): string | undefined =>
+  getStoredBrapiToken() ?? (import.meta.env.VITE_BRAPI_TOKEN as string | undefined);
 
 const BRAPI_CHUNK_SIZE = 20;
 
 const buildUrl = (path: string, params?: Record<string, string>) => {
   const url = new URL(`${BRAPI_BASE_URL}${path}`);
-  if (BRAPI_TOKEN) {
-    url.searchParams.set('token', BRAPI_TOKEN);
+  const token = getBrapiToken();
+  if (token) {
+    url.searchParams.set('token', token);
   }
   Object.entries(params ?? {}).forEach(([key, value]) => {
     url.searchParams.set(key, value);
@@ -31,7 +48,8 @@ const parseBrapiError = async (response: Response) => {
     // ignore parse errors
   }
   if (response.status === 401 || response.status === 403) {
-    message = 'Token da BRAPI ausente ou inválido. Configure VITE_BRAPI_TOKEN.';
+    message =
+      'Token da BRAPI ausente ou inválido. Configure o token nas Configurações ou em VITE_BRAPI_TOKEN.';
   }
   return message;
 };
@@ -65,8 +83,10 @@ export const fetchBrapiQuotes = async (
   tickers: string[]
 ): Promise<BrapiQuote[]> => {
   if (tickers.length === 0) return [];
-  if (!BRAPI_TOKEN) {
-    throw new Error('Token da BRAPI ausente. Configure VITE_BRAPI_TOKEN.');
+  if (!getBrapiToken()) {
+    throw new Error(
+      'Token da BRAPI ausente. Configure o token nas Configurações ou em VITE_BRAPI_TOKEN.'
+    );
   }
   const chunks: string[][] = [];
   for (let i = 0; i < tickers.length; i += BRAPI_CHUNK_SIZE) {
@@ -95,8 +115,10 @@ export const fetchBrapiHistoricalBars = async (
   ticker: string,
   timeframe: '15m' | '1d'
 ): Promise<Bar[]> => {
-  if (!BRAPI_TOKEN) {
-    throw new Error('Token da BRAPI ausente. Configure VITE_BRAPI_TOKEN.');
+  if (!getBrapiToken()) {
+    throw new Error(
+      'Token da BRAPI ausente. Configure o token nas Configurações ou em VITE_BRAPI_TOKEN.'
+    );
   }
   const params =
     timeframe === '15m'

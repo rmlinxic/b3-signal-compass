@@ -293,6 +293,21 @@ const Settings = () => {
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
+                <Label htmlFor="brapiToken">Token BRAPI</Label>
+                <Input
+                  id="brapiToken"
+                  type="password"
+                  value={settings.brapiToken}
+                  onChange={(e) => updateSetting('brapiToken', e.target.value)}
+                  placeholder="Informe o token da BRAPI"
+                  autoComplete="off"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Usado para autenticar as requisições à BRAPI (salvo localmente no navegador).
+                </p>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="updateInterval">
                   Intervalo de Atualização: {settings.updateInterval} min
                 </Label>
@@ -326,7 +341,7 @@ const Settings = () => {
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   Selecione o provedor de dados de mercado. Para BRAPI, configure
-                  o token em VITE_BRAPI_TOKEN.
+                  o token nas configurações ou em VITE_BRAPI_TOKEN.
                 </p>
               </div>
             </div>
