@@ -1,12 +1,16 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { AssetTable } from '@/components/dashboard/AssetTable';
 import { DashboardFiltersBar } from '@/components/dashboard/DashboardFiltersBar';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
 import { DashboardFilters, SortConfig, AssetWithSignal } from '@/types/market';
-import { generateMockDashboardData } from '@/lib/mockData';
 import { RefreshCw, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  getDashboardAssets,
+  getSettings,
+  refreshDashboardAssets,
+} from '@/lib/localDataStore';
 
 const Dashboard = () => {
   const [filters, setFilters] = useState<DashboardFilters>({
@@ -22,16 +26,20 @@ const Dashboard = () => {
     direction: 'desc',
   });
 
+  const [assets, setAssets] = useState<AssetWithSignal[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdate] = useState(new Date());
 
-  // Generate mock data (will be replaced with real data from Supabase)
-  const mockAssets = useMemo(() => generateMockDashboardData(), []);
+  useEffect(() => {
+    const initialAssets = getDashboardAssets();
+    setAssets(initialAssets);
+    refreshDashboardAssets(getSettings().dataProvider).then(setAssets);
+  }, []);
 
   const sortedAssets = useMemo(() => {
-    if (!sortConfig) return mockAssets;
+    if (!sortConfig) return assets;
 
-    return [...mockAssets].sort((a, b) => {
+    return [...assets].sort((a, b) => {
       const aVal = a[sortConfig.key];
       const bVal = b[sortConfig.key];
 
@@ -50,14 +58,27 @@ const Dashboard = () => {
 
       return 0;
     });
-  }, [mockAssets, sortConfig]);
+  }, [assets, sortConfig]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    // Simulate refresh delay
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const updated = await refreshDashboardAssets(getSettings().dataProvider);
+    setAssets(updated);
     setIsRefreshing(false);
   };
+
+  useEffect(() => {
+    const settings = getSettings();
+    if (settings.dataProvider !== 'brapi') return;
+
+    const intervalMs = 15 * 1000;
+    const intervalId = window.setInterval(() => {
+      refreshDashboardAssets(settings.dataProvider).then(setAssets);
+    }, intervalMs);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   return (
     <MainLayout>
@@ -92,7 +113,7 @@ const Dashboard = () => {
         </div>
 
         {/* Stats */}
-        <DashboardStats assets={mockAssets} />
+        <DashboardStats assets={assets} />
 
         {/* Filters */}
         <DashboardFiltersBar filters={filters} onFiltersChange={setFilters} />

@@ -25,6 +25,12 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { topStocks, topETFs } from '@/lib/mockData';
+import {
+  addAsset,
+  importAssets,
+  seedTopAssets,
+  getDashboardAssets,
+} from '@/lib/localDataStore';
 
 interface AssetInput {
   ticker: string;
@@ -41,14 +47,16 @@ const Admin = () => {
   const [bulkInput, setBulkInput] = useState('');
   const [isSeeding, setIsSeeding] = useState(false);
   const [seeded, setSeeded] = useState(false);
+  const [assetsPreview, setAssetsPreview] = useState(getDashboardAssets());
 
   const handleAddAsset = () => {
     if (!newAsset.ticker || !newAsset.name) {
       toast.error('Preencha todos os campos');
       return;
     }
-    // TODO: Add to Supabase
+    const updated = addAsset(newAsset.ticker, newAsset.name, newAsset.type);
     toast.success(`Ativo ${newAsset.ticker} adicionado com sucesso!`);
+    setAssetsPreview(updated);
     setNewAsset({ ticker: '', name: '', type: 'stock' });
   };
 
@@ -59,28 +67,30 @@ const Admin = () => {
       return;
     }
 
-    let imported = 0;
-    lines.forEach((line) => {
-      const [ticker, name, type] = line.split(';').map((s) => s.trim());
-      if (ticker && name && (type === 'stock' || type === 'etf')) {
-        // TODO: Add to Supabase
-        imported++;
-      }
-    });
+    const parsedRows = lines
+      .map((line) => {
+        const [ticker, name, type] = line.split(';').map((s) => s.trim());
+        if (ticker && name && (type === 'stock' || type === 'etf')) {
+          return { ticker, name, type };
+        }
+        return null;
+      })
+      .filter(Boolean) as Array<{ ticker: string; name: string; type: 'stock' | 'etf' }>;
 
-    toast.success(`${imported} ativos importados com sucesso!`);
+    const updated = importAssets(parsedRows);
+    toast.success(`${parsedRows.length} ativos importados com sucesso!`);
+    setAssetsPreview(updated);
     setBulkInput('');
   };
 
   const handleSeedData = async () => {
     setIsSeeding(true);
     
-    // Simulate seeding delay
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    
-    // TODO: Insert topStocks and topETFs to Supabase
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const updated = seedTopAssets();
     setIsSeeding(false);
     setSeeded(true);
+    setAssetsPreview(updated);
     toast.success('100 ativos cadastrados com sucesso! (50 ações + 50 ETFs)');
   };
 
@@ -289,7 +299,10 @@ const Admin = () => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {topStocks.slice(0, 10).map((asset) => (
+                      {assetsPreview
+                        .filter((asset) => asset.type === 'stock')
+                        .slice(0, 10)
+                        .map((asset) => (
                         <TableRow key={asset.ticker}>
                           <TableCell className="font-mono font-medium">
                             {asset.ticker}
@@ -319,7 +332,10 @@ const Admin = () => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {topETFs.slice(0, 10).map((asset) => (
+                      {assetsPreview
+                        .filter((asset) => asset.type === 'etf')
+                        .slice(0, 10)
+                        .map((asset) => (
                         <TableRow key={asset.ticker}>
                           <TableCell className="font-mono font-medium">
                             {asset.ticker}
