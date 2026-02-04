@@ -91,7 +91,7 @@ const Dashboard = () => {
     const settings = getSettings();
     if (settings.dataProvider !== 'brapi') return;
 
-    const intervalMs = 15 * 1000;
+    const intervalMs = settings.updateInterval * 60 * 1000;
     const intervalId = window.setInterval(() => {
       refreshDashboardAssets(settings.dataProvider)
         .then((updated) => {
