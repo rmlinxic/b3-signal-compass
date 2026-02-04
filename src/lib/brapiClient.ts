@@ -65,6 +65,9 @@ export const fetchBrapiQuotes = async (
   tickers: string[]
 ): Promise<BrapiQuote[]> => {
   if (tickers.length === 0) return [];
+  if (!BRAPI_TOKEN) {
+    throw new Error('Token da BRAPI ausente. Configure VITE_BRAPI_TOKEN.');
+  }
   const chunks: string[][] = [];
   for (let i = 0; i < tickers.length; i += BRAPI_CHUNK_SIZE) {
     chunks.push(tickers.slice(i, i + BRAPI_CHUNK_SIZE));
@@ -92,6 +95,9 @@ export const fetchBrapiHistoricalBars = async (
   ticker: string,
   timeframe: '15m' | '1d'
 ): Promise<Bar[]> => {
+  if (!BRAPI_TOKEN) {
+    throw new Error('Token da BRAPI ausente. Configure VITE_BRAPI_TOKEN.');
+  }
   const params =
     timeframe === '15m'
       ? { range: '1d', interval: '15m' }
