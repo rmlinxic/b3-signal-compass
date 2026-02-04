@@ -102,26 +102,35 @@ export const fetchBrapiHistoricalBars = async (
     timeframe === '15m'
       ? { range: '1d', interval: '15m' }
       : { range: '1y', interval: '1d' };
-  const response = await fetch(buildUrl(`/quote/${ticker}`, params));
-  if (!response.ok) {
-    throw new Error(await parseBrapiError(response));
-  }
-  const payload = (await response.json()) as BrapiHistoricalResponse;
-  const result = payload.results?.[0];
-  if (!result?.historicalDataPrice || result.historicalDataPrice.length === 0) {
-    throw new Error('A BRAPI não retornou dados históricos para a solicitação.');
+  const candidates = ticker.includes('.') ? [ticker] : [ticker, `${ticker}.SA`];
+  let lastError = 'A BRAPI não retornou dados históricos para a solicitação.';
+
+  for (const candidate of candidates) {
+    const response = await fetch(buildUrl(`/quote/${candidate}`, params));
+    if (!response.ok) {
+      lastError = await parseBrapiError(response);
+      continue;
+    }
+    const payload = (await response.json()) as BrapiHistoricalResponse;
+    const result = payload.results?.[0];
+    if (!result?.historicalDataPrice || result.historicalDataPrice.length === 0) {
+      lastError = 'A BRAPI não retornou dados históricos para a solicitação.';
+      continue;
+    }
+
+    return result.historicalDataPrice.map((item, idx) => ({
+      id: `${ticker}-${timeframe}-${item.date}-${idx}`,
+      asset_id: ticker,
+      timeframe,
+      timestamp: new Date(item.date * 1000).toISOString(),
+      open: item.open,
+      high: item.high,
+      low: item.low,
+      close: item.close,
+      volume: item.volume,
+      created_at: new Date().toISOString(),
+    }));
   }
 
-  return result.historicalDataPrice.map((item, idx) => ({
-    id: `${ticker}-${timeframe}-${item.date}-${idx}`,
-    asset_id: ticker,
-    timeframe,
-    timestamp: new Date(item.date * 1000).toISOString(),
-    open: item.open,
-    high: item.high,
-    low: item.low,
-    close: item.close,
-    volume: item.volume,
-    created_at: new Date().toISOString(),
-  }));
+  throw new Error(lastError);
 };
