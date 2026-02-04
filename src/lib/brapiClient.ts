@@ -45,7 +45,9 @@ export const fetchBrapiQuotes = async (
   if (tickers.length === 0) return [];
   const path = `/quote/${encodeURIComponent(tickers.join(','))}`;
   const response = await fetch(buildUrl(path));
-  if (!response.ok) return [];
+  if (!response.ok) {
+    throw new Error('Falha ao comunicar com a BRAPI.');
+  }
   const payload = (await response.json()) as BrapiQuoteResponse;
   return payload.results ?? [];
 };
@@ -59,7 +61,9 @@ export const fetchBrapiHistoricalBars = async (
       ? { range: '1d', interval: '15m' }
       : { range: '1y', interval: '1d' };
   const response = await fetch(buildUrl(`/quote/${ticker}`, params));
-  if (!response.ok) return [];
+  if (!response.ok) {
+    throw new Error('Falha ao comunicar com a BRAPI.');
+  }
   const payload = (await response.json()) as BrapiHistoricalResponse;
   const result = payload.results?.[0];
   if (!result?.historicalDataPrice) return [];
