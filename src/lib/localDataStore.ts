@@ -268,81 +268,85 @@ export const updateDashboardAssets = async (
     return simulateDashboardAssets();
   }
 
-  const assets = getAssetsFromStorage();
-  const settings = getSettingsFromStorage();
-  const tickers = assets.map((asset) => asset.ticker);
-  const quotes = await fetchBrapiQuotes(tickers);
-  const now = new Date().toISOString();
+  try {
+    const assets = getAssetsFromStorage();
+    const settings = getSettingsFromStorage();
+    const tickers = assets.map((asset) => asset.ticker);
+    const quotes = await fetchBrapiQuotes(tickers);
+    const now = new Date().toISOString();
 
-  if (quotes.length === 0) {
-    return simulateDashboardAssets();
-  }
+    if (quotes.length === 0) {
+      return simulateDashboardAssets();
+    }
 
-  const updated = await Promise.all(
-    assets.map(async (asset) => {
-      const quote = quotes.find((item) => item.symbol === asset.ticker);
-      if (!quote) return asset;
+    const updated = await Promise.all(
+      assets.map(async (asset) => {
+        const quote = quotes.find((item) => item.symbol === asset.ticker);
+        if (!quote) return asset;
 
-      const [bars15m, bars1d] = await Promise.all([
-        fetchBrapiHistoricalBars(asset.ticker, '15m'),
-        fetchBrapiHistoricalBars(asset.ticker, '1d'),
-      ]);
+        const [bars15m, bars1d] = await Promise.all([
+          fetchBrapiHistoricalBars(asset.ticker, '15m'),
+          fetchBrapiHistoricalBars(asset.ticker, '1d'),
+        ]);
 
-      const indicators15m = computeIndicators(bars15m, settings);
-      const indicators1d = computeIndicators(bars1d, settings);
+        const indicators15m = computeIndicators(bars15m, settings);
+        const indicators1d = computeIndicators(bars1d, settings);
 
-      const lastPrice =
-        quote.regularMarketPrice ??
-        indicators15m.lastClose ??
-        asset.last_price;
-      const distanceToSma =
-        indicators15m.sma100 && lastPrice
-          ? ((lastPrice - indicators15m.sma100) / indicators15m.sma100) * 100
-          : null;
-      const isSqueeze =
-        indicators15m.bbWidth !== null
-          ? indicators15m.bbWidth < settings.squeezeThreshold
-          : false;
-      const rsi15m = indicators15m.rsi ?? asset.rsi_15m ?? 50;
-      const signal = generateSignal(
-        isSqueeze,
-        rsi15m,
-        distanceToSma ?? 0
-      );
-
-      return {
-        ...asset,
-        last_price: lastPrice,
-        price_change_pct:
-          quote.regularMarketChangePercent ?? asset.price_change_pct,
-        volume: quote.regularMarketVolume ?? asset.volume,
-        bb_width_15m: indicators15m.bbWidth ?? asset.bb_width_15m,
-        is_squeeze: isSqueeze,
-        price_vs_sma100_15m:
+        const lastPrice =
+          quote.regularMarketPrice ??
+          indicators15m.lastClose ??
+          asset.last_price;
+        const distanceToSma =
           indicators15m.sma100 && lastPrice
-            ? lastPrice > indicators15m.sma100
-              ? 'above'
-              : 'below'
-            : asset.price_vs_sma100_15m,
-        price_vs_sma100_1d:
-          indicators1d.sma100 && lastPrice
-            ? lastPrice > indicators1d.sma100
-              ? 'above'
-              : 'below'
-            : asset.price_vs_sma100_1d,
-        distance_to_sma100: distanceToSma ?? asset.distance_to_sma100,
-        rsi_15m: indicators15m.rsi ?? asset.rsi_15m,
-        rsi_1d: indicators1d.rsi ?? asset.rsi_1d,
-        signal_side: signal.side,
-        confidence: signal.confidence,
-        last_updated: now,
-        updated_at: now,
-      };
-    })
-  );
+            ? ((lastPrice - indicators15m.sma100) / indicators15m.sma100) * 100
+            : null;
+        const isSqueeze =
+          indicators15m.bbWidth !== null
+            ? indicators15m.bbWidth < settings.squeezeThreshold
+            : false;
+        const rsi15m = indicators15m.rsi ?? asset.rsi_15m ?? 50;
+        const signal = generateSignal(
+          isSqueeze,
+          rsi15m,
+          distanceToSma ?? 0
+        );
 
-  localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(updated));
-  return updated;
+        return {
+          ...asset,
+          last_price: lastPrice,
+          price_change_pct:
+            quote.regularMarketChangePercent ?? asset.price_change_pct,
+          volume: quote.regularMarketVolume ?? asset.volume,
+          bb_width_15m: indicators15m.bbWidth ?? asset.bb_width_15m,
+          is_squeeze: isSqueeze,
+          price_vs_sma100_15m:
+            indicators15m.sma100 && lastPrice
+              ? lastPrice > indicators15m.sma100
+                ? 'above'
+                : 'below'
+              : asset.price_vs_sma100_15m,
+          price_vs_sma100_1d:
+            indicators1d.sma100 && lastPrice
+              ? lastPrice > indicators1d.sma100
+                ? 'above'
+                : 'below'
+              : asset.price_vs_sma100_1d,
+          distance_to_sma100: distanceToSma ?? asset.distance_to_sma100,
+          rsi_15m: indicators15m.rsi ?? asset.rsi_15m,
+          rsi_1d: indicators1d.rsi ?? asset.rsi_1d,
+          signal_side: signal.side,
+          confidence: signal.confidence,
+          last_updated: now,
+          updated_at: now,
+        };
+      })
+    );
+
+    localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(updated));
+    return updated;
+  } catch {
+    throw new Error('Falha de comunicação com a API da BRAPI.');
+  }
 };
 
 export const refreshDashboardAssets = async (

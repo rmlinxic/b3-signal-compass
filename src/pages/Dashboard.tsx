@@ -28,12 +28,23 @@ const Dashboard = () => {
 
   const [assets, setAssets] = useState<AssetWithSignal[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastUpdate] = useState(new Date());
+  const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const initialAssets = getDashboardAssets();
     setAssets(initialAssets);
-    refreshDashboardAssets(getSettings().dataProvider).then(setAssets);
+    refreshDashboardAssets(getSettings().dataProvider)
+      .then((updated) => {
+        setAssets(updated);
+        setLastUpdate(new Date());
+        setErrorMessage(null);
+      })
+      .catch(() => {
+        setErrorMessage(
+          'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+        );
+      });
   }, []);
 
   const sortedAssets = useMemo(() => {
@@ -63,8 +74,16 @@ const Dashboard = () => {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await new Promise((resolve) => setTimeout(resolve, 600));
-    const updated = await refreshDashboardAssets(getSettings().dataProvider);
-    setAssets(updated);
+    try {
+      const updated = await refreshDashboardAssets(getSettings().dataProvider);
+      setAssets(updated);
+      setLastUpdate(new Date());
+      setErrorMessage(null);
+    } catch {
+      setErrorMessage(
+        'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+      );
+    }
     setIsRefreshing(false);
   };
 
@@ -74,7 +93,17 @@ const Dashboard = () => {
 
     const intervalMs = 15 * 1000;
     const intervalId = window.setInterval(() => {
-      refreshDashboardAssets(settings.dataProvider).then(setAssets);
+      refreshDashboardAssets(settings.dataProvider)
+        .then((updated) => {
+          setAssets(updated);
+          setLastUpdate(new Date());
+          setErrorMessage(null);
+        })
+        .catch(() => {
+          setErrorMessage(
+            'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+          );
+        });
     }, intervalMs);
 
     return () => window.clearInterval(intervalId);
@@ -113,6 +142,15 @@ const Dashboard = () => {
         </div>
 
         {/* Stats */}
+        {errorMessage && (
+          <div
+            role="alert"
+            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            {errorMessage}
+          </div>
+        )}
+
         <DashboardStats assets={assets} />
 
         {/* Filters */}
