@@ -276,6 +276,8 @@ export const updateDashboardAssets = async (
     const tickers = assets.map((asset) => asset.ticker);
     const quotes = await fetchBrapiQuotes(tickers);
     const now = new Date().toISOString();
+    const normalizeTicker = (ticker: string) =>
+      ticker.includes('.') ? ticker : `${ticker}.SA`;
 
     if (quotes.length === 0) {
       throw new Error('A BRAPI não retornou dados para os ativos solicitados.');
@@ -283,7 +285,10 @@ export const updateDashboardAssets = async (
 
     const updated = await Promise.all(
       assets.map(async (asset) => {
-        const quote = quotes.find((item) => item.symbol === asset.ticker);
+        const normalizedTicker = normalizeTicker(asset.ticker);
+        const quote = quotes.find(
+          (item) => item.symbol === asset.ticker || item.symbol === normalizedTicker
+        );
         if (!quote) return asset;
 
         const [bars15m, bars1d] = await Promise.all([
