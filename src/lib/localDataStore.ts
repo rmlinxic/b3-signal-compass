@@ -20,6 +20,7 @@ export interface SettingsState {
   squeezePercentile: number;
   updateInterval: number;
   dataProvider: string;
+  brapiToken: string;
   confidenceWeights: {
     squeeze: number;
     smaCross: number;
@@ -37,6 +38,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   squeezePercentile: 10,
   updateInterval: 15,
   dataProvider: 'brapi',
+  brapiToken: 'mgXc96mbqF19ext2pfiWUs',
   confidenceWeights: {
     squeeze: 25,
     smaCross: 25,
@@ -274,6 +276,8 @@ export const updateDashboardAssets = async (
     const tickers = assets.map((asset) => asset.ticker);
     const quotes = await fetchBrapiQuotes(tickers);
     const now = new Date().toISOString();
+    const normalizeTicker = (ticker: string) =>
+      ticker.includes('.') ? ticker : `${ticker}.SA`;
 
     if (quotes.length === 0) {
       throw new Error('A BRAPI não retornou dados para os ativos solicitados.');
@@ -281,7 +285,10 @@ export const updateDashboardAssets = async (
 
     const updated = await Promise.all(
       assets.map(async (asset) => {
-        const quote = quotes.find((item) => item.symbol === asset.ticker);
+        const normalizedTicker = normalizeTicker(asset.ticker);
+        const quote = quotes.find(
+          (item) => item.symbol === asset.ticker || item.symbol === normalizedTicker
+        );
         if (!quote) return asset;
 
         const [bars15m, bars1d] = await Promise.all([
