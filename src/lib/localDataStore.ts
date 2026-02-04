@@ -278,6 +278,13 @@ export const updateDashboardAssets = async (
     const now = new Date().toISOString();
     const normalizeTicker = (ticker: string) =>
       ticker.includes('.') ? ticker : `${ticker}.SA`;
+    const loadBars = async (ticker: string, timeframe: '15m' | '1d') => {
+      try {
+        return await fetchBrapiHistoricalBars(ticker, timeframe);
+      } catch {
+        return [];
+      }
+    };
 
     if (quotes.length === 0) {
       throw new Error('A BRAPI não retornou dados para os ativos solicitados.');
@@ -292,8 +299,8 @@ export const updateDashboardAssets = async (
         if (!quote) return asset;
 
         const [bars15m, bars1d] = await Promise.all([
-          fetchBrapiHistoricalBars(asset.ticker, '15m'),
-          fetchBrapiHistoricalBars(asset.ticker, '1d'),
+          loadBars(asset.ticker, '15m'),
+          loadBars(asset.ticker, '1d'),
         ]);
 
         const indicators15m = computeIndicators(bars15m, settings);
@@ -306,11 +313,11 @@ export const updateDashboardAssets = async (
         const distanceToSma =
           indicators15m.sma100 && lastPrice
             ? ((lastPrice - indicators15m.sma100) / indicators15m.sma100) * 100
-            : null;
+            : asset.distance_to_sma100 ?? null;
         const isSqueeze =
           indicators15m.bbWidth !== null
             ? indicators15m.bbWidth < settings.squeezeThreshold
-            : false;
+            : asset.is_squeeze ?? false;
         const rsi15m = indicators15m.rsi ?? asset.rsi_15m ?? 50;
         const signal = generateSignal(
           isSqueeze,
