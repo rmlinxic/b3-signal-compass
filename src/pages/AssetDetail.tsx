@@ -3,7 +3,12 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { SignalBadge } from '@/components/signals/SignalBadge';
 import { SqueezeBadge } from '@/components/signals/SqueezeBadge';
 import { ConfidenceMeter } from '@/components/signals/ConfidenceMeter';
-import { generateMockDashboardData, generateMockBars } from '@/lib/mockData';
+import {
+  getCachedBars,
+  getDashboardAssets,
+  saveCachedBars,
+} from '@/lib/localDataStore';
+import { fetchBrapiHistoricalBars } from '@/lib/brapiClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -28,25 +33,38 @@ import {
   Bar as RechartsBar,
   Area,
 } from 'recharts';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { Bar } from '@/types/market';
 import { cn } from '@/lib/utils';
 
 const AssetDetail = () => {
   const { ticker } = useParams<{ ticker: string }>();
 
   // Find asset data
-  const assets = useMemo(() => generateMockDashboardData(), []);
+  const assets = useMemo(() => getDashboardAssets(), []);
   const asset = assets.find((a) => a.ticker === ticker);
 
-  // Generate mock bar data
-  const bars15m = useMemo(
-    () => generateMockBars(asset?.id || '', '15m', 100),
-    [asset?.id]
-  );
-  const bars1d = useMemo(
-    () => generateMockBars(asset?.id || '', '1d', 100),
-    [asset?.id]
-  );
+  const [bars15m, setBars15m] = useState<Bar[]>([]);
+  const [bars1d, setBars1d] = useState<Bar[]>([]);
+
+  useEffect(() => {
+    if (!asset) return;
+    const loadBars = async (timeframe: '15m' | '1d') => {
+      const cached = getCachedBars(asset.id, timeframe, 10 * 60 * 1000);
+      if (cached) return cached;
+
+      const fetched = await fetchBrapiHistoricalBars(asset.ticker, timeframe);
+      if (fetched.length > 0) {
+        saveCachedBars(asset.id, timeframe, fetched);
+        return fetched;
+      }
+
+      return [];
+    };
+
+    loadBars('15m').then(setBars15m);
+    loadBars('1d').then(setBars1d);
+  }, [asset?.id, asset?.ticker]);
 
   // Calculate Bollinger Bands and SMA100 for chart display
   const chartData15m = useMemo(() => {

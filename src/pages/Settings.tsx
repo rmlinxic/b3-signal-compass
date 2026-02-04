@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -16,43 +16,22 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Settings as SettingsIcon, Save, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
-
-interface SettingsState {
-  bbPeriod: number;
-  bbStd: number;
-  rsiPeriod: number;
-  smaPeriod: number;
-  squeezeThreshold: number;
-  squeezePercentile: number;
-  updateInterval: number;
-  dataProvider: string;
-  confidenceWeights: {
-    squeeze: number;
-    smaCross: number;
-    rsi: number;
-    bbExpansion: number;
-  };
-}
+import {
+  DEFAULT_SETTINGS,
+  getSettings,
+  resetSettings,
+  saveSettings,
+  SettingsState,
+} from '@/lib/localDataStore';
 
 const Settings = () => {
-  const [settings, setSettings] = useState<SettingsState>({
-    bbPeriod: 20,
-    bbStd: 2,
-    rsiPeriod: 14,
-    smaPeriod: 100,
-    squeezeThreshold: 0.05,
-    squeezePercentile: 10,
-    updateInterval: 5,
-    dataProvider: 'brapi',
-    confidenceWeights: {
-      squeeze: 25,
-      smaCross: 25,
-      rsi: 25,
-      bbExpansion: 25,
-    },
-  });
+  const [settings, setSettings] = useState<SettingsState>(DEFAULT_SETTINGS);
 
   const [hasChanges, setHasChanges] = useState(false);
+
+  useEffect(() => {
+    setSettings(getSettings());
+  }, []);
 
   const updateSetting = <K extends keyof SettingsState>(
     key: K,
@@ -74,28 +53,13 @@ const Settings = () => {
   };
 
   const handleSave = () => {
-    // TODO: Save to Supabase
+    saveSettings(settings);
     toast.success('Configurações salvas com sucesso!');
     setHasChanges(false);
   };
 
   const handleReset = () => {
-    setSettings({
-      bbPeriod: 20,
-      bbStd: 2,
-      rsiPeriod: 14,
-      smaPeriod: 100,
-      squeezeThreshold: 0.05,
-      squeezePercentile: 10,
-      updateInterval: 5,
-      dataProvider: 'brapi',
-      confidenceWeights: {
-        squeeze: 25,
-        smaCross: 25,
-        rsi: 25,
-        bbExpansion: 25,
-      },
-    });
+    setSettings(resetSettings());
     setHasChanges(true);
     toast.info('Configurações restauradas para valores padrão');
   };
@@ -356,14 +320,13 @@ const Settings = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="brapi">BRAPI (Recomendado)</SelectItem>
-                    <SelectItem value="alphavantage">Alpha Vantage</SelectItem>
-                    <SelectItem value="twelvedata">Twelve Data</SelectItem>
-                    <SelectItem value="polygon">Polygon.io</SelectItem>
+                    <SelectItem value="simulado">Simulado (Local)</SelectItem>
                     <SelectItem value="manual">Manual / CSV</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Selecione o provedor de dados de mercado
+                  Selecione o provedor de dados de mercado. Para BRAPI, configure
+                  o token em VITE_BRAPI_TOKEN.
                 </p>
               </div>
             </div>
