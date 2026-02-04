@@ -46,6 +46,7 @@ const AssetDetail = () => {
 
   const [bars15m, setBars15m] = useState<Bar[]>([]);
   const [bars1d, setBars1d] = useState<Bar[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!asset) return;
@@ -53,13 +54,17 @@ const AssetDetail = () => {
       const cached = getCachedBars(asset.id, timeframe, 10 * 60 * 1000);
       if (cached) return cached;
 
-      const fetched = await fetchBrapiHistoricalBars(asset.ticker, timeframe);
-      if (fetched.length > 0) {
+      try {
+        const fetched = await fetchBrapiHistoricalBars(asset.ticker, timeframe);
         saveCachedBars(asset.id, timeframe, fetched);
+        setErrorMessage(null);
         return fetched;
+      } catch {
+        setErrorMessage(
+          'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+        );
+        return [];
       }
-
-      return [];
     };
 
     loadBars('15m').then(setBars15m);
@@ -353,6 +358,14 @@ const AssetDetail = () => {
   return (
     <MainLayout>
       <div className="space-y-6 animate-slide-up">
+        {errorMessage && (
+          <div
+            role="alert"
+            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            {errorMessage}
+          </div>
+        )}
         {/* Back button and header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-4">

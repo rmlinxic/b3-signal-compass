@@ -49,7 +49,10 @@ export const fetchBrapiQuotes = async (
     throw new Error('Falha ao comunicar com a BRAPI.');
   }
   const payload = (await response.json()) as BrapiQuoteResponse;
-  return payload.results ?? [];
+  if (!payload.results || payload.results.length === 0) {
+    throw new Error('A BRAPI não retornou dados para a solicitação.');
+  }
+  return payload.results;
 };
 
 export const fetchBrapiHistoricalBars = async (
@@ -66,7 +69,9 @@ export const fetchBrapiHistoricalBars = async (
   }
   const payload = (await response.json()) as BrapiHistoricalResponse;
   const result = payload.results?.[0];
-  if (!result?.historicalDataPrice) return [];
+  if (!result?.historicalDataPrice || result.historicalDataPrice.length === 0) {
+    throw new Error('A BRAPI não retornou dados históricos para a solicitação.');
+  }
 
   return result.historicalDataPrice.map((item, idx) => ({
     id: `${ticker}-${timeframe}-${item.date}-${idx}`,

@@ -35,7 +35,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   smaPeriod: 100,
   squeezeThreshold: 0.05,
   squeezePercentile: 10,
-  updateInterval: 5,
+  updateInterval: 15,
   dataProvider: 'brapi',
   confidenceWeights: {
     squeeze: 25,
@@ -276,7 +276,7 @@ export const updateDashboardAssets = async (
     const now = new Date().toISOString();
 
     if (quotes.length === 0) {
-      return simulateDashboardAssets();
+      throw new Error('A BRAPI não retornou dados para os ativos solicitados.');
     }
 
     const updated = await Promise.all(
