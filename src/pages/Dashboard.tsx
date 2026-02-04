@@ -40,9 +40,11 @@ const Dashboard = () => {
         setLastUpdate(new Date());
         setErrorMessage(null);
       })
-      .catch(() => {
+      .catch((error) => {
         setErrorMessage(
-          'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+          error instanceof Error
+            ? error.message
+            : 'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
         );
       });
   }, []);
@@ -79,9 +81,11 @@ const Dashboard = () => {
       setAssets(updated);
       setLastUpdate(new Date());
       setErrorMessage(null);
-    } catch {
+    } catch (error) {
       setErrorMessage(
-        'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+        error instanceof Error
+          ? error.message
+          : 'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
       );
     }
     setIsRefreshing(false);
@@ -99,9 +103,11 @@ const Dashboard = () => {
           setLastUpdate(new Date());
           setErrorMessage(null);
         })
-        .catch(() => {
+        .catch((error) => {
           setErrorMessage(
-            'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+            error instanceof Error
+              ? error.message
+              : 'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
           );
         });
     }, intervalMs);

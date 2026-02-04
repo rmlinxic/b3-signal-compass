@@ -59,9 +59,11 @@ const AssetDetail = () => {
         saveCachedBars(asset.id, timeframe, fetched);
         setErrorMessage(null);
         return fetched;
-      } catch {
+      } catch (error) {
         setErrorMessage(
-          'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+          error instanceof Error
+            ? error.message
+            : 'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
         );
         return [];
       }

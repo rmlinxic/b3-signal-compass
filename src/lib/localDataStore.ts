@@ -344,8 +344,12 @@ export const updateDashboardAssets = async (
 
     localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(updated));
     return updated;
-  } catch {
-    throw new Error('Falha de comunicação com a API da BRAPI.');
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'Falha de comunicação com a API da BRAPI.';
+    throw new Error(message);
   }
 };
 
