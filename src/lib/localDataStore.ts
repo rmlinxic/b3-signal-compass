@@ -1,6 +1,5 @@
 import { AssetWithSignal, Bar, SignalSide, Setting } from '@/types/market';
 import { LIQUID_POOL } from '@/lib/stockPool';
-import { fetchBrapiHistoricalBars, fetchBrapiQuotes } from '@/lib/brapiClient';
 import {
   fetchYahooQuote,
   fetchYahooHistoricalBars,
@@ -85,11 +84,11 @@ export const resetSettings = (): SettingsState => {
  *  - VENDA:   squeeze + RSI 15m < 50 + preço abaixo da SMA100
  *  - NEUTRO:  qualquer outro caso
  *
- * Pontuação de confiança (0–100), 4 pilares de 0–25 pts cada:
- *  1. Squeeze detectado              → +25 pts (obrigatório)
- *  2. Força RSI 15m                  → |RSI-50| / 40 * 25
- *  3. Distância percentual da SMA100 → min(|dist|, 5%) / 5% * 25
- *  4. Alinhamento RSI 1d             → mesma direção do 15m
+ * Pontuação de confiança (0-100), 4 pilares de 0-25 pts cada:
+ *  1. Squeeze detectado              -> +25 pts (obrigatório)
+ *  2. Força RSI 15m                  -> |RSI-50| / 40 * 25
+ *  3. Distância percentual da SMA100 -> min(|dist|, 5%) / 5% * 25
+ *  4. Alinhamento RSI 1d             -> mesma direção do 15m
  */
 const generateSignal = (
   isSqueeze: boolean,
@@ -105,12 +104,12 @@ const generateSignal = (
 
   const side: SignalSide = bullish ? 'buy' : 'sell';
 
-  let score = 25; // pilar 1: squeeze
-  score += (Math.min(Math.abs(rsi15m - 50), 40) / 40) * 25; // pilar 2
-  score += (Math.min(Math.abs(distanceToSma), 5) / 5) * 25; // pilar 3
+  let score = 25;
+  score += (Math.min(Math.abs(rsi15m - 50), 40) / 40) * 25;
+  score += (Math.min(Math.abs(distanceToSma), 5) / 5) * 25;
   if (rsi1d !== null) {
     const aligned = bullish ? rsi1d > 50 : rsi1d < 50;
-    if (aligned) score += (Math.min(Math.abs(rsi1d - 50), 40) / 40) * 25; // pilar 4
+    if (aligned) score += (Math.min(Math.abs(rsi1d - 50), 40) / 40) * 25;
   }
 
   return { side, confidence: Math.round(Math.min(score, 100)) };
@@ -129,7 +128,8 @@ const calculateBB = (
   if (closes.length < period) return null;
   const slice = closes.slice(-period);
   const middle = slice.reduce((a, b) => a + b, 0) / period;
-  const variance = slice.reduce((acc, v) => acc + Math.pow(v - middle, 2), 0) / period;
+  const variance =
+    slice.reduce((acc, v) => acc + Math.pow(v - middle, 2), 0) / period;
   const std = Math.sqrt(variance);
   const upper = middle + stdMultiplier * std;
   const lower = middle - stdMultiplier * std;
@@ -138,7 +138,8 @@ const calculateBB = (
 
 const calculateRSI = (closes: number[], period: number): number | null => {
   if (closes.length < period + 1) return null;
-  let gains = 0, losses = 0;
+  let gains = 0,
+    losses = 0;
   for (let i = closes.length - period; i < closes.length; i++) {
     const change = closes[i] - closes[i - 1];
     if (change > 0) gains += change;
@@ -153,7 +154,8 @@ const calculateRSI = (closes: number[], period: number): number | null => {
 const computeIndicators = (bars: Bar[], settings: SettingsState) => {
   const closes = bars.map((b) => b.close);
   return {
-    bbWidth: calculateBB(closes, settings.bbPeriod, settings.bbStd)?.width ?? null,
+    bbWidth:
+      calculateBB(closes, settings.bbPeriod, settings.bbStd)?.width ?? null,
     sma100: calculateSMA(closes, settings.smaPeriod),
     rsi: calculateRSI(closes, settings.rsiPeriod),
     lastClose: closes.length > 0 ? closes[closes.length - 1] : null,
@@ -222,46 +224,38 @@ export const replaceMonitoredAssets = (
   return newAssets;
 };
 
-// ─── Fetch helpers (Yahoo → BRAPI fallback) ───────────────────────────────────
+// --- Fetch via Yahoo Finance (unica fonte de dados de mercado) ---
 
-const fetchQuoteWithFallback = async (
-  ticker: string
-): Promise<YahooQuote | null> => {
+/**
+ * Busca cotacao atual via Yahoo Finance.
+ * BRAPI nao e usado aqui: plano gratuito nao suporta intervalo 15m.
+ */
+const fetchQuote = async (ticker: string): Promise<YahooQuote | null> => {
   try {
     return await fetchYahooQuote(ticker);
-  } catch {
-    try {
-      const results = await fetchBrapiQuotes([ticker]);
-      const q = results[0];
-      if (!q) return null;
-      return {
-        symbol: q.symbol,
-        regularMarketPrice: q.regularMarketPrice,
-        regularMarketChangePercent: q.regularMarketChangePercent,
-        regularMarketVolume: q.regularMarketVolume,
-      };
-    } catch {
-      return null;
-    }
+  } catch (err) {
+    console.warn(`[Yahoo] Cotacao falhou para ${ticker}:`, err);
+    return null;
   }
 };
 
-const fetchBarsWithFallback = async (
+/**
+ * Busca barras historicas via Yahoo Finance.
+ * BRAPI nao e usado aqui: plano gratuito nao suporta 15m nem range > 1d intraday.
+ */
+const fetchBars = async (
   ticker: string,
   timeframe: '15m' | '1d'
 ): Promise<Bar[]> => {
   try {
     return await fetchYahooHistoricalBars(ticker, timeframe);
-  } catch {
-    try {
-      return await fetchBrapiHistoricalBars(ticker, timeframe);
-    } catch {
-      return [];
-    }
+  } catch (err) {
+    console.warn(`[Yahoo] Historico ${timeframe} falhou para ${ticker}:`, err);
+    return [];
   }
 };
 
-// ─── Compute de indicadores e sinais por ativo ───────────────────────────────
+// --- Compute de indicadores e sinais por ativo ---
 
 const computeAsset = async (
   asset: AssetWithSignal | SupabaseAsset,
@@ -278,13 +272,12 @@ const computeAsset = async (
           0
         );
 
-  // Preserve Supabase UUID if available
   const id = (asset as SupabaseAsset).id ?? base.id;
 
   const [quote, bars15m, bars1d] = await Promise.all([
-    fetchQuoteWithFallback(asset.ticker),
-    fetchBarsWithFallback(asset.ticker, '15m'),
-    fetchBarsWithFallback(asset.ticker, '1d'),
+    fetchQuote(asset.ticker),
+    fetchBars(asset.ticker, '15m'),
+    fetchBars(asset.ticker, '1d'),
   ]);
 
   const ind15m = computeIndicators(bars15m, settings);
@@ -340,7 +333,7 @@ const computeAsset = async (
   };
 };
 
-// ─── updateDashboardAssets ────────────────────────────────────────────────────
+// --- updateDashboardAssets ---
 
 export const updateDashboardAssets = async (
   _provider: SettingsState['dataProvider']
@@ -360,19 +353,19 @@ export const updateDashboardAssets = async (
 
   const source = useSupabase ? supabaseAssets : getAssetsFromStorage();
 
-  // 2. Computa indicadores e sinais para cada ativo
+  // 2. Computa indicadores e sinais (Yahoo Finance apenas)
   const updated = await Promise.all(
     source.map((asset) => computeAsset(asset, settings, now))
   );
 
-  // 3. Salva sinais no Supabase (visível para todos os usuários)
+  // 3. Salva sinais no Supabase (visivel para todos)
   if (useSupabase) {
     saveSignalsToSupabase(updated).catch((err) =>
       console.warn('[Supabase] Falha ao salvar sinais:', err)
     );
   }
 
-  // 4. Salva no localStorage como cache offline
+  // 4. Cache local
   localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(updated));
   return updated;
 };
@@ -401,9 +394,7 @@ export const importAssets = (
   rows: Array<{ ticker: string; name: string; type: 'stock' | 'etf' }>
 ): AssetWithSignal[] => {
   let updated = getAssetsFromStorage();
-  rows.forEach((r) => {
-    updated = addAsset(r.ticker, r.name, r.type);
-  });
+  rows.forEach((r) => { updated = addAsset(r.ticker, r.name, r.type); });
   return updated;
 };
 
@@ -424,7 +415,10 @@ export const getSettingsEntries = (): Setting[] => {
 
 const getBarsKey = (a: string, t: string) => `${STORAGE_KEYS.bars}.${a}.${t}`;
 
-export interface StoredBarsPayload { timestamp: string; data: Bar[] }
+export interface StoredBarsPayload {
+  timestamp: string;
+  data: Bar[];
+}
 
 export const getStoredBars = (a: string, t: string): string | null =>
   localStorage.getItem(getBarsKey(a, t));
@@ -440,9 +434,12 @@ export const getCachedBars = (
     const parsed = JSON.parse(stored) as StoredBarsPayload | Bar[];
     if (Array.isArray(parsed)) return parsed;
     const cachedAt = new Date(parsed.timestamp).getTime();
-    if (Number.isNaN(cachedAt) || Date.now() - cachedAt > maxAgeMs) return null;
+    if (Number.isNaN(cachedAt) || Date.now() - cachedAt > maxAgeMs)
+      return null;
     return parsed.data;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 };
 
 export const saveStoredBars = (a: string, t: string, data: unknown): void => {
