@@ -22,6 +22,7 @@ import {
   ChevronUp,
   ChevronDown,
 } from 'lucide-react';
+import { CandlestickChart } from '@/components/charts/CandlestickChart';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -29,8 +30,6 @@ import {
   YAxis,
   Tooltip,
   ReferenceLine,
-  Line,
-  Bar as RechartsBar,
   Area,
 } from 'recharts';
 import { useEffect, useMemo, useState } from 'react';
@@ -119,17 +118,11 @@ const AssetDetail = () => {
             )
           : 0;
 
-      const sma50Slice = closes.slice(-50);
-      const sma50 =
-        sma50Slice.length >= 50
-          ? sma50Slice.reduce((a, b) => a + b, 0) / 50
-          : null;
-
-      const sma200Slice = closes.slice(-200);
-      const sma200 =
-        sma200Slice.length >= 200
-          ? sma200Slice.reduce((a, b) => a + b, 0) / 200
-          : null;
+      const sma100Slice = closes.slice(-100);
+      const sma100 =
+        sma100Slice.length >= 100
+          ? sma100Slice.reduce((a, b) => a + b, 0) / 100
+          : sma20;
 
       return {
         time: timeFmt(bar.timestamp),
@@ -141,8 +134,7 @@ const AssetDetail = () => {
         sma20,
         bbUpper: sma20 + 2 * std,
         bbLower: sma20 - 2 * std,
-        sma50,
-        sma200,
+        sma100,
       };
     });
 
@@ -193,98 +185,7 @@ const AssetDetail = () => {
   const signalInfo = asset.signal_type ? SIGNAL_TYPE_DESC[asset.signal_type] : null;
 
   const PriceChart = ({ data }: { data: ReturnType<typeof buildChartData> }) => (
-    <div className="h-[420px]">
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart
-          data={data.slice(-120)}
-          margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-        >
-          <XAxis
-            dataKey="time"
-            axisLine={false}
-            tickLine={false}
-            tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-            interval="preserveStartEnd"
-          />
-          <YAxis
-            domain={['auto', 'auto']}
-            axisLine={false}
-            tickLine={false}
-            tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-            tickFormatter={(v) => `R$${Number(v).toFixed(0)}`}
-          />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: 'hsl(var(--card))',
-              border: '1px solid hsl(var(--border))',
-              borderRadius: '8px',
-            }}
-            labelStyle={{ color: 'hsl(var(--foreground))' }}
-            formatter={(value: number, name: string) => [
-              `R$ ${value.toFixed(2)}`,
-              name,
-            ]}
-          />
-          {/* Bollinger Bands */}
-          <Area
-            dataKey="bbUpper"
-            stroke="hsl(var(--chart-bb))"
-            strokeWidth={1}
-            fill="hsl(var(--chart-bb))"
-            fillOpacity={0.06}
-            dot={false}
-            legendType="none"
-            name="BB Superior"
-          />
-          <Area
-            dataKey="bbLower"
-            stroke="hsl(var(--chart-bb))"
-            strokeWidth={1}
-            fill="hsl(var(--background))"
-            fillOpacity={1}
-            dot={false}
-            legendType="none"
-            name="BB Inferior"
-          />
-          {/* SMA20 (BB Middle) */}
-          <Line
-            dataKey="sma20"
-            stroke="hsl(var(--chart-bb))"
-            strokeWidth={1}
-            dot={false}
-            strokeDasharray="3 3"
-            legendType="none"
-            name="SMA20"
-          />
-          {/* SMA50 */}
-          <Line
-            dataKey="sma50"
-            stroke="hsl(var(--chart-sma))"
-            strokeWidth={2}
-            dot={false}
-            connectNulls
-            name="SMA50"
-          />
-          {/* SMA200 */}
-          <Line
-            dataKey="sma200"
-            stroke="hsl(var(--signal-sell))"
-            strokeWidth={1.5}
-            dot={false}
-            strokeDasharray="5 3"
-            connectNulls
-            name="SMA200"
-          />
-          {/* Preco (barra simplificada) */}
-          <RechartsBar
-            dataKey="close"
-            fill="hsl(var(--chart-candle-up))"
-            opacity={0.75}
-            name="Fechamento"
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
+    <CandlestickChart data={data} height={420} />
   );
 
   const RSIChart = ({ data }: { data: { time: string; rsi: number }[] }) => (
