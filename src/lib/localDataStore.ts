@@ -1,4 +1,10 @@
-import { AssetWithSignal, Bar, SignalSide, Setting } from '@/types/market';
+import {
+  AssetWithSignal,
+  Bar,
+  SignalSide,
+  SignalType,
+  Setting,
+} from '@/types/market';
 import { LIQUID_POOL } from '@/lib/stockPool';
 import {
   fetchYahooQuote,
@@ -21,17 +27,19 @@ export interface SettingsState {
   bbPeriod: number;
   bbStd: number;
   rsiPeriod: number;
-  smaPeriod: number;
+  smaPeriod: number;    // SMA rapida: 50
+  sma200Period: number; // SMA lenta: 200
   squeezeThreshold: number;
-  squeezePercentile: number;
+  rsiOversold: number;  // limiar de sobrevenda para swing: 45
+  rsiOverbought: number; // limiar de sobrecompra para swing: 60
   updateInterval: number;
   dataProvider: string;
   brapiToken: string;
   confidenceWeights: {
-    squeeze: number;
+    bandTouch: number;
+    rsiConfluence: number;
+    trendAlignment: number;
     smaCross: number;
-    rsi: number;
-    bbExpansion: number;
   };
 }
 
@@ -39,17 +47,19 @@ export const DEFAULT_SETTINGS: SettingsState = {
   bbPeriod: 20,
   bbStd: 2,
   rsiPeriod: 14,
-  smaPeriod: 100,
-  squeezeThreshold: 0.05,
-  squeezePercentile: 10,
-  updateInterval: 15,
+  smaPeriod: 50,
+  sma200Period: 200,
+  squeezeThreshold: 0.07,
+  rsiOversold: 45,
+  rsiOverbought: 60,
+  updateInterval: 30,
   dataProvider: 'yahoo',
   brapiToken: (import.meta.env.VITE_BRAPI_TOKEN as string | undefined) ?? '',
   confidenceWeights: {
-    squeeze: 25,
-    smaCross: 25,
-    rsi: 25,
-    bbExpansion: 25,
+    bandTouch: 30,
+    rsiConfluence: 25,
+    trendAlignment: 25,
+    smaCross: 20,
   },
 };
 
@@ -76,55 +86,25 @@ export const resetSettings = (): SettingsState => {
   return DEFAULT_SETTINGS;
 };
 
-/**
- * Gera sinal de compra/venda/neutro com base nos indicadores calculados.
- *
- * Critérios:
- *  - COMPRA:  squeeze + RSI 15m > 50 + preço acima da SMA100
- *  - VENDA:   squeeze + RSI 15m < 50 + preço abaixo da SMA100
- *  - NEUTRO:  qualquer outro caso
- *
- * Pontuação de confiança (0-100), 4 pilares de 0-25 pts cada:
- *  1. Squeeze detectado              -> +25 pts (obrigatório)
- *  2. Força RSI 15m                  -> |RSI-50| / 40 * 25
- *  3. Distância percentual da SMA100 -> min(|dist|, 5%) / 5% * 25
- *  4. Alinhamento RSI 1d             -> mesma direção do 15m
- */
-const generateSignal = (
-  isSqueeze: boolean,
-  rsi15m: number,
-  distanceToSma: number,
-  rsi1d: number | null = null
-): { side: SignalSide; confidence: number } => {
-  if (!isSqueeze) return { side: 'neutral', confidence: 0 };
-
-  const bullish = rsi15m > 50 && distanceToSma > 0;
-  const bearish = rsi15m < 50 && distanceToSma < 0;
-  if (!bullish && !bearish) return { side: 'neutral', confidence: 0 };
-
-  const side: SignalSide = bullish ? 'buy' : 'sell';
-
-  let score = 25;
-  score += (Math.min(Math.abs(rsi15m - 50), 40) / 40) * 25;
-  score += (Math.min(Math.abs(distanceToSma), 5) / 5) * 25;
-  if (rsi1d !== null) {
-    const aligned = bullish ? rsi1d > 50 : rsi1d < 50;
-    if (aligned) score += (Math.min(Math.abs(rsi1d - 50), 40) / 40) * 25;
-  }
-
-  return { side, confidence: Math.round(Math.min(score, 100)) };
-};
+// --- Calculos tecnicos ---
 
 const calculateSMA = (closes: number[], period: number): number | null => {
   if (closes.length < period) return null;
   return closes.slice(-period).reduce((a, b) => a + b, 0) / period;
 };
 
+interface BBResult {
+  upper: number;
+  middle: number;
+  lower: number;
+  width: number;
+}
+
 const calculateBB = (
   closes: number[],
   period: number,
   stdMultiplier: number
-): { width: number } | null => {
+): BBResult | null => {
   if (closes.length < period) return null;
   const slice = closes.slice(-period);
   const middle = slice.reduce((a, b) => a + b, 0) / period;
@@ -133,7 +113,12 @@ const calculateBB = (
   const std = Math.sqrt(variance);
   const upper = middle + stdMultiplier * std;
   const lower = middle - stdMultiplier * std;
-  return { width: middle > 0 ? (upper - lower) / middle : 0 };
+  return {
+    upper,
+    middle,
+    lower,
+    width: middle > 0 ? (upper - lower) / middle : 0,
+  };
 };
 
 const calculateRSI = (closes: number[], period: number): number | null => {
@@ -151,12 +136,107 @@ const calculateRSI = (closes: number[], period: number): number | null => {
   return 100 - 100 / (1 + avgGain / avgLoss);
 };
 
+/**
+ * Logica de sinais para Swing Trade com Bandas de Bollinger.
+ *
+ * Setups detectados:
+ *  1. bb_bounce     -> Preco toca banda inferior + RSI < rsiOversold (sobrevenda)
+ *                     Operacao de reversao: entrada perto da banda inferior,
+ *                     alvo na banda do meio (SMA20), stop abaixo da banda inferior.
+ *
+ *  2. bb_rejection  -> Preco toca banda superior + RSI > rsiOverbought (sobrecompra)
+ *                     Sinal de cautela/venda: preco provavelmente reverte a media.
+ *
+ *  3. bb_breakout   -> Squeeze detectado + fechamento ACIMA da banda superior + RSI > 50
+ *                     Rompimento altista apos contracao: tendencia forte.
+ *
+ *  4. bb_breakdown  -> Squeeze detectado + fechamento ABAIXO da banda inferior + RSI < 50
+ *                     Rompimento baixista apos contracao: queda forte.
+ *
+ * Filtros de tendencia:
+ *  - SMA50 > SMA200 (golden cross): contexto macro altista, favorece compras.
+ *  - SMA50 < SMA200 (death cross):  contexto macro baixista, favorece vendas.
+ *
+ * Pontuacao de confianca (0-100):
+ *  - Toque na banda: ate 30 pts
+ *  - Confluencia do RSI: ate 25 pts
+ *  - Alinhamento de tendencia (preco vs SMA50): ate 25 pts
+ *  - Cruzamento de MMAs (golden/death cross): ate 20 pts
+ */
+const generateSwingSignal = (
+  lastClose: number,
+  bb: BBResult,
+  sma50: number | null,
+  sma200: number | null,
+  rsi1d: number | null,
+  settings: SettingsState
+): { side: SignalSide; type: SignalType; confidence: number } => {
+  const neutral = { side: 'neutral' as SignalSide, type: null as SignalType, confidence: 0 };
+  if (rsi1d === null) return neutral;
+
+  const isSqueeze = bb.width < settings.squeezeThreshold;
+
+  // --- BB Squeeze Breakout (maior prioridade) ---
+  if (isSqueeze) {
+    if (lastClose > bb.upper && rsi1d > 50) {
+      const rsiBon = Math.min((rsi1d - 50) / 50, 1) * 25;
+      const trendBon = sma50 && lastClose > sma50 ? 25 : 10;
+      const crossBon = sma50 && sma200 && sma50 > sma200 ? 20 : 0;
+      return {
+        side: 'buy',
+        type: 'bb_breakout',
+        confidence: Math.round(Math.min(30 + rsiBon + trendBon + crossBon, 100)),
+      };
+    }
+    if (lastClose < bb.lower && rsi1d < 50) {
+      const rsiBon = Math.min((50 - rsi1d) / 50, 1) * 25;
+      const trendBon = sma50 && lastClose < sma50 ? 25 : 10;
+      const crossBon = sma50 && sma200 && sma50 < sma200 ? 20 : 0;
+      return {
+        side: 'sell',
+        type: 'bb_breakdown',
+        confidence: Math.round(Math.min(30 + rsiBon + trendBon + crossBon, 100)),
+      };
+    }
+  }
+
+  // --- BB Bounce Buy: preco na banda inferior + RSI sobrevenda ---
+  if (lastClose <= bb.lower * 1.015 && rsi1d < settings.rsiOversold) {
+    const bandScore = lastClose <= bb.lower ? 30 : 15;
+    const rsiScore = Math.min((settings.rsiOversold - rsi1d) / settings.rsiOversold, 1) * 25;
+    const trendScore = sma50 && lastClose > sma50 ? 25 : 10; // acima da SMA50 = melhor qualidade
+    const crossScore = sma50 && sma200 && sma50 > sma200 ? 20 : 0;
+    return {
+      side: 'buy',
+      type: 'bb_bounce',
+      confidence: Math.round(Math.min(bandScore + rsiScore + trendScore + crossScore, 100)),
+    };
+  }
+
+  // --- BB Rejection Sell: preco na banda superior + RSI sobrecompra ---
+  if (lastClose >= bb.upper * 0.985 && rsi1d > settings.rsiOverbought) {
+    const bandScore = lastClose >= bb.upper ? 30 : 15;
+    const rsiScore =
+      Math.min((rsi1d - settings.rsiOverbought) / (100 - settings.rsiOverbought), 1) * 25;
+    const trendScore = sma50 && lastClose < sma50 ? 25 : 10;
+    const crossScore = sma50 && sma200 && sma50 < sma200 ? 20 : 0;
+    return {
+      side: 'sell',
+      type: 'bb_rejection',
+      confidence: Math.round(Math.min(bandScore + rsiScore + trendScore + crossScore, 100)),
+    };
+  }
+
+  return neutral;
+};
+
 const computeIndicators = (bars: Bar[], settings: SettingsState) => {
   const closes = bars.map((b) => b.close);
+  const bb = calculateBB(closes, settings.bbPeriod, settings.bbStd);
   return {
-    bbWidth:
-      calculateBB(closes, settings.bbPeriod, settings.bbStd)?.width ?? null,
-    sma100: calculateSMA(closes, settings.smaPeriod),
+    bb,
+    sma50: calculateSMA(closes, settings.smaPeriod),
+    sma200: calculateSMA(closes, settings.sma200Period),
     rsi: calculateRSI(closes, settings.rsiPeriod),
     lastClose: closes.length > 0 ? closes[closes.length - 1] : null,
   };
@@ -180,14 +260,18 @@ export const createAssetWithSignal = (
     last_price: 0,
     price_change_pct: 0,
     volume: 0,
-    bb_width_15m: null,
+    bb_width_1d: null,
+    bb_upper_1d: null,
+    bb_lower_1d: null,
+    bb_middle_1d: null,
     is_squeeze: false,
-    price_vs_sma100_15m: null,
-    price_vs_sma100_1d: null,
-    distance_to_sma100: null,
-    rsi_15m: null,
+    price_vs_sma50: null,
+    price_vs_sma200: null,
+    distance_to_sma50: null,
     rsi_1d: null,
+    rsi_1wk: null,
     signal_side: 'neutral',
+    signal_type: null,
     confidence: 0,
     last_updated: now,
   };
@@ -224,12 +308,8 @@ export const replaceMonitoredAssets = (
   return newAssets;
 };
 
-// --- Fetch via Yahoo Finance (unica fonte de dados de mercado) ---
+// --- Fetch Yahoo Finance ---
 
-/**
- * Busca cotacao atual via Yahoo Finance.
- * BRAPI nao e usado aqui: plano gratuito nao suporta intervalo 15m.
- */
 const fetchQuote = async (ticker: string): Promise<YahooQuote | null> => {
   try {
     return await fetchYahooQuote(ticker);
@@ -239,13 +319,9 @@ const fetchQuote = async (ticker: string): Promise<YahooQuote | null> => {
   }
 };
 
-/**
- * Busca barras historicas via Yahoo Finance.
- * BRAPI nao e usado aqui: plano gratuito nao suporta 15m nem range > 1d intraday.
- */
 const fetchBars = async (
   ticker: string,
-  timeframe: '15m' | '1d'
+  timeframe: '1d' | '1wk'
 ): Promise<Bar[]> => {
   try {
     return await fetchYahooHistoricalBars(ticker, timeframe);
@@ -255,7 +331,7 @@ const fetchBars = async (
   }
 };
 
-// --- Compute de indicadores e sinais por ativo ---
+// --- Compute por ativo ---
 
 const computeAsset = async (
   asset: AssetWithSignal | SupabaseAsset,
@@ -274,59 +350,57 @@ const computeAsset = async (
 
   const id = (asset as SupabaseAsset).id ?? base.id;
 
-  const [quote, bars15m, bars1d] = await Promise.all([
+  const [quote, bars1d, bars1wk] = await Promise.all([
     fetchQuote(asset.ticker),
-    fetchBars(asset.ticker, '15m'),
     fetchBars(asset.ticker, '1d'),
+    fetchBars(asset.ticker, '1wk'),
   ]);
 
-  const ind15m = computeIndicators(bars15m, settings);
   const ind1d = computeIndicators(bars1d, settings);
+  const ind1wk = computeIndicators(bars1wk, settings);
 
   const lastPrice =
-    quote?.regularMarketPrice ?? ind15m.lastClose ?? base.last_price;
+    quote?.regularMarketPrice ?? ind1d.lastClose ?? base.last_price;
 
-  const distanceToSma =
-    ind15m.sma100 && lastPrice
-      ? ((lastPrice - ind15m.sma100) / ind15m.sma100) * 100
-      : base.distance_to_sma100 ?? null;
+  const { bb, sma50, sma200, rsi } = ind1d;
 
-  const isSqueeze =
-    ind15m.bbWidth !== null
-      ? ind15m.bbWidth < settings.squeezeThreshold
-      : false;
+  const signal =
+    bb && lastPrice
+      ? generateSwingSignal(lastPrice, bb, sma50, sma200, rsi, settings)
+      : { side: 'neutral' as SignalSide, type: null as SignalType, confidence: 0 };
 
-  const rsi15m = ind15m.rsi ?? base.rsi_15m ?? 50;
-  const rsi1d = ind1d.rsi ?? base.rsi_1d ?? null;
-  const signal = generateSignal(isSqueeze, rsi15m, distanceToSma ?? 0, rsi1d);
+  const isSqueeze = bb ? bb.width < settings.squeezeThreshold : false;
 
   return {
     ...base,
     id,
     created_at: (asset as SupabaseAsset).created_at ?? base.created_at,
-    updated_at: (asset as SupabaseAsset).updated_at ?? base.updated_at,
+    updated_at: now,
     last_price: lastPrice,
     price_change_pct:
       quote?.regularMarketChangePercent ?? base.price_change_pct,
     volume: quote?.regularMarketVolume ?? base.volume,
-    bb_width_15m: ind15m.bbWidth ?? base.bb_width_15m,
+    bb_width_1d: bb?.width ?? base.bb_width_1d,
+    bb_upper_1d: bb?.upper ?? base.bb_upper_1d,
+    bb_lower_1d: bb?.lower ?? base.bb_lower_1d,
+    bb_middle_1d: bb?.middle ?? base.bb_middle_1d,
     is_squeeze: isSqueeze,
-    price_vs_sma100_15m:
-      ind15m.sma100 && lastPrice
-        ? lastPrice > ind15m.sma100
-          ? 'above'
-          : 'below'
-        : base.price_vs_sma100_15m,
-    price_vs_sma100_1d:
-      ind1d.sma100 && lastPrice
-        ? lastPrice > ind1d.sma100
-          ? 'above'
-          : 'below'
-        : base.price_vs_sma100_1d,
-    distance_to_sma100: distanceToSma ?? base.distance_to_sma100,
-    rsi_15m: rsi15m,
-    rsi_1d: rsi1d,
+    price_vs_sma50:
+      sma50 && lastPrice
+        ? lastPrice > sma50 ? 'above' : 'below'
+        : base.price_vs_sma50,
+    price_vs_sma200:
+      sma200 && lastPrice
+        ? lastPrice > sma200 ? 'above' : 'below'
+        : base.price_vs_sma200,
+    distance_to_sma50:
+      sma50 && lastPrice
+        ? ((lastPrice - sma50) / sma50) * 100
+        : base.distance_to_sma50,
+    rsi_1d: rsi ?? base.rsi_1d,
+    rsi_1wk: ind1wk.rsi ?? base.rsi_1wk,
     signal_side: signal.side,
+    signal_type: signal.type,
     confidence: signal.confidence,
     last_updated: now,
   };
@@ -340,7 +414,6 @@ export const updateDashboardAssets = async (
   const settings = getSettingsFromStorage();
   const now = new Date().toISOString();
 
-  // 1. Tenta carregar ativos do Supabase (compartilhado)
   let supabaseAssets: SupabaseAsset[] = [];
   let useSupabase = false;
   try {
@@ -352,19 +425,16 @@ export const updateDashboardAssets = async (
 
   const source = useSupabase ? supabaseAssets : getAssetsFromStorage();
 
-  // 2. Computa indicadores e sinais (Yahoo Finance apenas)
   const updated = await Promise.all(
     source.map((asset) => computeAsset(asset, settings, now))
   );
 
-  // 3. Salva sinais no Supabase (visivel para todos)
   if (useSupabase) {
     saveSignalsToSupabase(updated).catch((err) =>
       console.warn('[Supabase] Falha ao salvar sinais:', err)
     );
   }
 
-  // 4. Cache local
   localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(updated));
   return updated;
 };
@@ -433,8 +503,7 @@ export const getCachedBars = (
     const parsed = JSON.parse(stored) as StoredBarsPayload | Bar[];
     if (Array.isArray(parsed)) return parsed;
     const cachedAt = new Date(parsed.timestamp).getTime();
-    if (Number.isNaN(cachedAt) || Date.now() - cachedAt > maxAgeMs)
-      return null;
+    if (Number.isNaN(cachedAt) || Date.now() - cachedAt > maxAgeMs) return null;
     return parsed.data;
   } catch {
     return null;

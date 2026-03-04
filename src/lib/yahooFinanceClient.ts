@@ -54,11 +54,13 @@ export const fetchYahooQuote = async (ticker: string): Promise<YahooQuote> => {
 
   const payload = (await response.json()) as YFResponse;
   if (payload.chart?.error)
-    throw new Error(`Yahoo Finance: ${payload.chart.error.description ?? 'erro desconhecido'}`);
+    throw new Error(
+      `Yahoo Finance: ${payload.chart.error.description ?? 'erro desconhecido'}`
+    );
 
   const result = payload.chart?.result?.[0];
   if (!result)
-    throw new Error(`Yahoo Finance não retornou dados para ${ticker}.`);
+    throw new Error(`Yahoo Finance nao retornou dados para ${ticker}.`);
 
   return {
     symbol: ticker,
@@ -68,22 +70,21 @@ export const fetchYahooQuote = async (ticker: string): Promise<YahooQuote> => {
   };
 };
 
+/**
+ * Ranges usados para swing trade:
+ *  1d  -> interval=1d,  range=1y  (~252 barras, suficiente para SMA200)
+ *  1wk -> interval=1wk, range=2y  (~104 barras semanais para tendencia)
+ *
+ * Yahoo Finance suporta esses ranges sem restricao de plano.
+ */
 export const fetchYahooHistoricalBars = async (
   ticker: string,
-  timeframe: '15m' | '1d'
+  timeframe: '1d' | '1wk'
 ): Promise<Bar[]> => {
-  /**
-   * Ranges:
-   *  15m -> range '5d'  (~96 barras intraday suficientes para BB/RSI 15m)
-   *  1d  -> range '6mo' (~126 pregões, suficiente para SMA100 + margem)
-   *
-   * Não usar '1y': pode ser bloqueado pelo proxy para alguns tickers
-   * e não é necessário para os cálculos atuais.
-   */
-  const params =
-    timeframe === '15m'
-      ? { interval: '15m', range: '5d' }
-      : { interval: '1d', range: '6mo' };
+  const params: Record<string, string> =
+    timeframe === '1d'
+      ? { interval: '1d', range: '1y' }
+      : { interval: '1wk', range: '2y' };
 
   const url = buildUrl(ticker, params);
   const response = await fetch(url);
@@ -95,13 +96,15 @@ export const fetchYahooHistoricalBars = async (
   const payload = (await response.json()) as YFResponse;
   if (payload.chart?.error)
     throw new Error(
-      `Yahoo Finance: ${payload.chart.error.description ?? 'erro desconhecido'} [${ticker}]`
+      `Yahoo Finance: ${
+        payload.chart.error.description ?? 'erro desconhecido'
+      } [${ticker}]`
     );
 
   const result = payload.chart?.result?.[0];
   if (!result?.timestamp || !result.indicators?.quote?.[0])
     throw new Error(
-      `Yahoo Finance não retornou histórico para ${ticker} (${timeframe}).`
+      `Yahoo Finance nao retornou historico para ${ticker} (${timeframe}).`
     );
 
   const { timestamp } = result;
@@ -131,7 +134,7 @@ export const fetchYahooHistoricalBars = async (
 
   if (bars.length === 0)
     throw new Error(
-      `Yahoo Finance retornou histórico vazio para ${ticker} (${timeframe}).`
+      `Yahoo Finance retornou historico vazio para ${ticker} (${timeframe}).`
     );
 
   return bars;

@@ -18,7 +18,7 @@ import {
   TrendingDown,
   Activity,
   BarChart3,
-  Clock,
+  Calendar,
   ChevronUp,
   ChevronDown,
 } from 'lucide-react';
@@ -29,12 +29,36 @@ import {
   YAxis,
   Tooltip,
   ReferenceLine,
+  Line,
+  Bar as RechartsBar,
   Area,
 } from 'recharts';
 import { useEffect, useMemo, useState } from 'react';
 import type { Bar } from '@/types/market';
 import { cn } from '@/lib/utils';
-import { CandlestickChart } from '@/components/charts/CandlestickChart';
+
+const SIGNAL_TYPE_DESC: Record<string, { label: string; desc: string; color: string }> = {
+  bb_bounce: {
+    label: 'Bounce na Banda Inferior',
+    desc: 'Preco tocou a banda inferior com RSI em sobrevenda. Setup de reversao: entrada proxima a banda inferior, alvo na media (SMA20), stop abaixo da minima recente.',
+    color: 'text-signal-buy',
+  },
+  bb_breakout: {
+    label: 'Rompimento de Squeeze Altista',
+    desc: 'As bandas estavam contraidas (baixa volatilidade) e o preco rompeu acima da banda superior. Sinal de inicio de tendencia forte de alta.',
+    color: 'text-signal-buy',
+  },
+  bb_rejection: {
+    label: 'Rejeicao na Banda Superior',
+    desc: 'Preco tocou a banda superior com RSI em sobrecompra. Sinal de possivel reversao ou pausada de alta. Considere reducao de posicao ou stop ajustado.',
+    color: 'text-signal-sell',
+  },
+  bb_breakdown: {
+    label: 'Rompimento de Squeeze Baixista',
+    desc: 'As bandas estavam contraidas e o preco rompeu abaixo da banda inferior com RSI fraco. Sinal de inicio de tendencia de queda.',
+    color: 'text-signal-sell',
+  },
+};
 
 const AssetDetail = () => {
   const { ticker } = useParams<{ ticker: string }>();
@@ -42,58 +66,70 @@ const AssetDetail = () => {
   const assets = useMemo(() => getDashboardAssets(), []);
   const asset = assets.find((a) => a.ticker === ticker);
 
-  const [bars15m, setBars15m] = useState<Bar[]>([]);
   const [bars1d, setBars1d] = useState<Bar[]>([]);
+  const [bars1wk, setBars1wk] = useState<Bar[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!asset) return;
 
-    const loadBars = async (timeframe: '15m' | '1d'): Promise<Bar[]> => {
-      // Tenta cache primeiro (10 min de validade)
-      const cached = getCachedBars(asset.id, timeframe, 10 * 60 * 1000);
+    const load = async (tf: '1d' | '1wk'): Promise<Bar[]> => {
+      const cached = getCachedBars(asset.id, tf, 30 * 60 * 1000); // 30min cache
       if (cached && cached.length > 0) return cached;
-
-      const fetched = await fetchYahooHistoricalBars(asset.ticker, timeframe);
-      saveCachedBars(asset.id, timeframe, fetched);
+      const fetched = await fetchYahooHistoricalBars(asset.ticker, tf);
+      saveCachedBars(asset.id, tf, fetched);
       return fetched;
     };
 
     setIsLoading(true);
     setErrorMessage(null);
 
-    Promise.all([loadBars('15m'), loadBars('1d')])
-      .then(([b15m, b1d]) => {
-        setBars15m(b15m);
-        setBars1d(b1d);
+    Promise.all([load('1d'), load('1wk')])
+      .then(([d, w]) => {
+        setBars1d(d);
+        setBars1wk(w);
       })
       .catch((err) => {
         setErrorMessage(
-          err instanceof Error
-            ? err.message
-            : 'Falha ao carregar dados do Yahoo Finance.'
+          err instanceof Error ? err.message : 'Falha ao carregar dados do Yahoo Finance.'
         );
       })
       .finally(() => setIsLoading(false));
   }, [asset?.id, asset?.ticker]);
 
-  // Calcula BB(20,2) + SMA100 para o grafico
+  // Constroi dados de grafico com BB(20,2) + SMA50 + SMA200
   const buildChartData = (
     bars: Bar[],
     timeFmt: (ts: string) => string
   ) =>
     bars.map((bar, idx) => {
-      const slice = bars.slice(Math.max(0, idx - 19), idx + 1);
-      const closes = slice.map((b) => b.close);
-      const sma20 = closes.reduce((a, b) => a + b, 0) / closes.length;
-      const std = Math.sqrt(
-        closes.reduce((acc, c) => acc + Math.pow(c - sma20, 2), 0) /
-          closes.length
-      );
-      const sma100Slice = bars.slice(Math.max(0, idx - 99), idx + 1);
-      const sma100 =
-        sma100Slice.reduce((a, b) => a + b.close, 0) / sma100Slice.length;
+      const closes = bars.slice(0, idx + 1).map((b) => b.close);
+
+      const bbSlice = closes.slice(-20);
+      const sma20 =
+        bbSlice.length > 0
+          ? bbSlice.reduce((a, b) => a + b, 0) / bbSlice.length
+          : bar.close;
+      const std =
+        bbSlice.length > 1
+          ? Math.sqrt(
+              bbSlice.reduce((acc, c) => acc + Math.pow(c - sma20, 2), 0) /
+                bbSlice.length
+            )
+          : 0;
+
+      const sma50Slice = closes.slice(-50);
+      const sma50 =
+        sma50Slice.length >= 50
+          ? sma50Slice.reduce((a, b) => a + b, 0) / 50
+          : null;
+
+      const sma200Slice = closes.slice(-200);
+      const sma200 =
+        sma200Slice.length >= 200
+          ? sma200Slice.reduce((a, b) => a + b, 0) / 200
+          : null;
 
       return {
         time: timeFmt(bar.timestamp),
@@ -105,88 +141,44 @@ const AssetDetail = () => {
         sma20,
         bbUpper: sma20 + 2 * std,
         bbLower: sma20 - 2 * std,
-        sma100,
+        sma50,
+        sma200,
       };
     });
 
-  const chartData15m = useMemo(
-    () =>
-      buildChartData(bars15m, (ts) =>
-        new Date(ts).toLocaleTimeString('pt-BR', {
-          hour: '2-digit',
-          minute: '2-digit',
-        })
-      ),
-    [bars15m]
-  );
+  const fmtDay = (ts: string) =>
+    new Date(ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const fmtWeek = (ts: string) =>
+    new Date(ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
 
-  const chartData1d = useMemo(
-    () =>
-      buildChartData(bars1d, (ts) =>
-        new Date(ts).toLocaleDateString('pt-BR', {
-          day: '2-digit',
-          month: '2-digit',
-        })
-      ),
-    [bars1d]
-  );
+  const chartData1d = useMemo(() => buildChartData(bars1d, fmtDay), [bars1d]);
+  const chartData1wk = useMemo(() => buildChartData(bars1wk, fmtWeek), [bars1wk]);
 
   // RSI(14)
-  const calculateRSI = (data: Bar[], period = 14) => {
+  const calcRSI = (bars: Bar[], timeFmt: (ts: string) => string, period = 14) => {
     const out: { time: string; rsi: number }[] = [];
-    for (let i = period; i < data.length; i++) {
-      let gains = 0,
-        losses = 0;
+    for (let i = period; i < bars.length; i++) {
+      let gains = 0, losses = 0;
       for (let j = i - period + 1; j <= i; j++) {
-        const ch = data[j].close - data[j - 1].close;
+        const ch = bars[j].close - bars[j - 1].close;
         if (ch > 0) gains += ch;
         else losses -= ch;
       }
-      const avg = losses === 0 ? 100 : 100 - 100 / (1 + gains / losses);
-      out.push({
-        time: new Date(data[i].timestamp).toLocaleTimeString('pt-BR', {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        rsi: avg,
-      });
+      const rsi = losses === 0 ? 100 : 100 - 100 / (1 + gains / losses);
+      out.push({ time: timeFmt(bars[i].timestamp), rsi });
     }
     return out;
   };
 
-  const calculateRSI1d = (data: Bar[], period = 14) => {
-    const out: { time: string; rsi: number }[] = [];
-    for (let i = period; i < data.length; i++) {
-      let gains = 0,
-        losses = 0;
-      for (let j = i - period + 1; j <= i; j++) {
-        const ch = data[j].close - data[j - 1].close;
-        if (ch > 0) gains += ch;
-        else losses -= ch;
-      }
-      const avg = losses === 0 ? 100 : 100 - 100 / (1 + gains / losses);
-      out.push({
-        time: new Date(data[i].timestamp).toLocaleDateString('pt-BR', {
-          day: '2-digit',
-          month: '2-digit',
-        }),
-        rsi: avg,
-      });
-    }
-    return out;
-  };
-
-  const rsiData15m = useMemo(() => calculateRSI(bars15m), [bars15m]);
-  const rsiData1d = useMemo(() => calculateRSI1d(bars1d), [bars1d]);
+  const rsiData1d = useMemo(() => calcRSI(bars1d, fmtDay), [bars1d]);
+  const rsiData1wk = useMemo(() => calcRSI(bars1wk, fmtWeek), [bars1wk]);
 
   if (!asset) {
     return (
       <MainLayout>
         <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
-          <h1 className="text-2xl font-bold">Ativo não encontrado</h1>
-          <p className="text-muted-foreground">
-            O ticker "{ticker}" não foi encontrado.
-          </p>
+          <h1 className="text-2xl font-bold">Ativo nao encontrado</h1>
+          <p className="text-muted-foreground">O ticker "{ticker}" nao foi encontrado.</p>
           <Button asChild>
             <Link to="/">
               <ArrowLeft className="h-4 w-4 mr-2" />
@@ -198,41 +190,13 @@ const AssetDetail = () => {
     );
   }
 
-  const generateRationale = () => {
-    const reasons: string[] = [];
-    if (asset.is_squeeze)
-      reasons.push(
-        `Detectado squeeze nas Bandas de Bollinger (BB Width: ${asset.bb_width_15m?.toFixed(4)})`
-      );
-    if (asset.price_vs_sma100_15m === 'above')
-      reasons.push('Preço acima da SMA100 no timeframe de 15 minutos');
-    else if (asset.price_vs_sma100_15m === 'below')
-      reasons.push('Preço abaixo da SMA100 no timeframe de 15 minutos');
-    if (asset.price_vs_sma100_1d === 'above')
-      reasons.push('Tendência de alta no diário (acima da SMA100)');
-    else if (asset.price_vs_sma100_1d === 'below')
-      reasons.push('Tendência de baixa no diário (abaixo da SMA100)');
-    const rsi = asset.rsi_15m ?? 50;
-    if (rsi > 70)
-      reasons.push(`RSI em zona de sobrecompra (${rsi.toFixed(1)})`);
-    else if (rsi < 30)
-      reasons.push(`RSI em zona de sobrevenda (${rsi.toFixed(1)})`);
-    else if (rsi > 50)
-      reasons.push(`RSI indicando momentum positivo (${rsi.toFixed(1)})`);
-    else
-      reasons.push(`RSI indicando momentum negativo (${rsi.toFixed(1)})`);
-    return reasons;
-  };
+  const signalInfo = asset.signal_type ? SIGNAL_TYPE_DESC[asset.signal_type] : null;
 
-  const PriceChart = ({ data }: { data: typeof chartData15m }) => (
-    <CandlestickChart data={data} height={420} />
-  );
-
-  const RSIChart = ({ data }: { data: { time: string; rsi: number }[] }) => (
-    <div className="h-[150px]">
+  const PriceChart = ({ data }: { data: ReturnType<typeof buildChartData> }) => (
+    <div className="h-[420px]">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart
-          data={data.slice(-80)}
+          data={data.slice(-120)}
           margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
         >
           <XAxis
@@ -240,13 +204,109 @@ const AssetDetail = () => {
             axisLine={false}
             tickLine={false}
             tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+            interval="preserveStartEnd"
+          />
+          <YAxis
+            domain={['auto', 'auto']}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+            tickFormatter={(v) => `R$${Number(v).toFixed(0)}`}
+          />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: 'hsl(var(--card))',
+              border: '1px solid hsl(var(--border))',
+              borderRadius: '8px',
+            }}
+            labelStyle={{ color: 'hsl(var(--foreground))' }}
+            formatter={(value: number, name: string) => [
+              `R$ ${value.toFixed(2)}`,
+              name,
+            ]}
+          />
+          {/* Bollinger Bands */}
+          <Area
+            dataKey="bbUpper"
+            stroke="hsl(var(--chart-bb))"
+            strokeWidth={1}
+            fill="hsl(var(--chart-bb))"
+            fillOpacity={0.06}
+            dot={false}
+            legendType="none"
+            name="BB Superior"
+          />
+          <Area
+            dataKey="bbLower"
+            stroke="hsl(var(--chart-bb))"
+            strokeWidth={1}
+            fill="hsl(var(--background))"
+            fillOpacity={1}
+            dot={false}
+            legendType="none"
+            name="BB Inferior"
+          />
+          {/* SMA20 (BB Middle) */}
+          <Line
+            dataKey="sma20"
+            stroke="hsl(var(--chart-bb))"
+            strokeWidth={1}
+            dot={false}
+            strokeDasharray="3 3"
+            legendType="none"
+            name="SMA20"
+          />
+          {/* SMA50 */}
+          <Line
+            dataKey="sma50"
+            stroke="hsl(var(--chart-sma))"
+            strokeWidth={2}
+            dot={false}
+            connectNulls
+            name="SMA50"
+          />
+          {/* SMA200 */}
+          <Line
+            dataKey="sma200"
+            stroke="hsl(var(--signal-sell))"
+            strokeWidth={1.5}
+            dot={false}
+            strokeDasharray="5 3"
+            connectNulls
+            name="SMA200"
+          />
+          {/* Preco (barra simplificada) */}
+          <RechartsBar
+            dataKey="close"
+            fill="hsl(var(--chart-candle-up))"
+            opacity={0.75}
+            name="Fechamento"
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+
+  const RSIChart = ({ data }: { data: { time: string; rsi: number }[] }) => (
+    <div className="h-[160px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart
+          data={data.slice(-120)}
+          margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+        >
+          <XAxis
+            dataKey="time"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+            interval="preserveStartEnd"
           />
           <YAxis
             domain={[0, 100]}
             axisLine={false}
             tickLine={false}
             tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-            ticks={[30, 50, 70]}
+            ticks={[30, 45, 60, 70]}
           />
           <Tooltip
             contentStyle={{
@@ -256,21 +316,9 @@ const AssetDetail = () => {
             }}
             formatter={(v: number) => [v.toFixed(1), 'RSI']}
           />
-          <ReferenceLine
-            y={70}
-            stroke="hsl(var(--signal-sell))"
-            strokeDasharray="3 3"
-          />
-          <ReferenceLine
-            y={30}
-            stroke="hsl(var(--signal-buy))"
-            strokeDasharray="3 3"
-          />
-          <ReferenceLine
-            y={50}
-            stroke="hsl(var(--muted-foreground))"
-            strokeDasharray="2 2"
-          />
+          <ReferenceLine y={60} stroke="hsl(var(--signal-sell))" strokeDasharray="3 3" strokeOpacity={0.7} />
+          <ReferenceLine y={45} stroke="hsl(var(--signal-buy))" strokeDasharray="3 3" strokeOpacity={0.7} />
+          <ReferenceLine y={50} stroke="hsl(var(--muted-foreground))" strokeDasharray="2 2" strokeOpacity={0.4} />
           <Area
             dataKey="rsi"
             stroke="hsl(var(--chart-rsi))"
@@ -299,9 +347,7 @@ const AssetDetail = () => {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" asChild>
-              <Link to="/">
-                <ArrowLeft className="h-5 w-5" />
-              </Link>
+              <Link to="/"><ArrowLeft className="h-5 w-5" /></Link>
             </Button>
             <div>
               <div className="flex items-center gap-3">
@@ -309,44 +355,38 @@ const AssetDetail = () => {
                 <span
                   className={cn(
                     'text-xs px-2 py-0.5 rounded uppercase',
-                    asset.type === 'stock'
-                      ? 'bg-primary/20 text-primary'
-                      : 'bg-accent/20 text-accent'
+                    asset.type === 'stock' ? 'bg-primary/20 text-primary' : 'bg-accent/20 text-accent'
                   )}
                 >
-                  {asset.type === 'stock' ? 'Ação' : 'ETF'}
+                  {asset.type === 'stock' ? 'Acao' : 'ETF'}
                 </span>
               </div>
               <p className="text-sm text-muted-foreground">{asset.name}</p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-2xl font-bold font-mono">
-                R$ {asset.last_price.toFixed(2)}
-              </p>
-              <p
-                className={cn(
-                  'text-sm font-medium flex items-center justify-end gap-1',
-                  asset.price_change_pct >= 0
-                    ? 'text-signal-buy'
-                    : 'text-signal-sell'
-                )}
-              >
-                {asset.price_change_pct >= 0 ? (
-                  <TrendingUp className="h-4 w-4" />
-                ) : (
-                  <TrendingDown className="h-4 w-4" />
-                )}
-                {asset.price_change_pct >= 0 ? '+' : ''}
-                {asset.price_change_pct.toFixed(2)}%
-              </p>
-            </div>
+          <div className="text-right">
+            <p className="text-2xl font-bold font-mono">
+              R$ {asset.last_price.toFixed(2)}
+            </p>
+            <p
+              className={cn(
+                'text-sm font-medium flex items-center justify-end gap-1',
+                asset.price_change_pct >= 0 ? 'text-signal-buy' : 'text-signal-sell'
+              )}
+            >
+              {asset.price_change_pct >= 0 ? (
+                <TrendingUp className="h-4 w-4" />
+              ) : (
+                <TrendingDown className="h-4 w-4" />
+              )}
+              {asset.price_change_pct >= 0 ? '+' : ''}
+              {asset.price_change_pct.toFixed(2)}%
+            </p>
           </div>
         </div>
 
-        {/* Metricas */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+        {/* Metricas de Swing Trade */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
           <Card>
             <CardContent className="pt-4">
               <p className="text-xs text-muted-foreground mb-1">Sinal</p>
@@ -355,35 +395,55 @@ const AssetDetail = () => {
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <p className="text-xs text-muted-foreground mb-1">Squeeze</p>
-              <SqueezeBadge isActive={asset.is_squeeze} />
+              <p className="text-xs text-muted-foreground mb-1">Setup</p>
+              {asset.signal_type && signalInfo ? (
+                <span className={cn('text-xs font-semibold', signalInfo.color)}>
+                  {signalInfo.label}
+                </span>
+              ) : (
+                <SqueezeBadge isActive={asset.is_squeeze} />
+              )}
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <p className="text-xs text-muted-foreground mb-1">Confiança</p>
+              <p className="text-xs text-muted-foreground mb-1">Confianca</p>
               <ConfidenceMeter value={asset.confidence} />
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <p className="text-xs text-muted-foreground mb-1">RSI 15m</p>
+              <p className="text-xs text-muted-foreground mb-1">RSI (D)</p>
               <p
                 className={cn(
                   'text-lg font-bold font-mono',
-                  (asset.rsi_15m ?? 50) > 70 && 'text-signal-sell',
-                  (asset.rsi_15m ?? 50) < 30 && 'text-signal-buy'
+                  (asset.rsi_1d ?? 50) > 60 && 'text-signal-sell',
+                  (asset.rsi_1d ?? 50) < 45 && 'text-signal-buy'
                 )}
               >
-                {asset.rsi_15m?.toFixed(1) ?? '—'}
+                {asset.rsi_1d?.toFixed(1) ?? '—'}
               </p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <p className="text-xs text-muted-foreground mb-1">SMA100 15m</p>
+              <p className="text-xs text-muted-foreground mb-1">RSI (S)</p>
+              <p
+                className={cn(
+                  'text-lg font-bold font-mono',
+                  (asset.rsi_1wk ?? 50) > 60 && 'text-signal-sell',
+                  (asset.rsi_1wk ?? 50) < 45 && 'text-signal-buy'
+                )}
+              >
+                {asset.rsi_1wk?.toFixed(1) ?? '—'}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-4">
+              <p className="text-xs text-muted-foreground mb-1">vs SMA50</p>
               <div className="flex items-center gap-1">
-                {asset.price_vs_sma100_15m === 'above' ? (
+                {asset.price_vs_sma50 === 'above' ? (
                   <ChevronUp className="h-4 w-4 text-signal-buy" />
                 ) : (
                   <ChevronDown className="h-4 w-4 text-signal-sell" />
@@ -391,87 +451,63 @@ const AssetDetail = () => {
                 <span
                   className={cn(
                     'text-sm font-medium',
-                    asset.price_vs_sma100_15m === 'above'
-                      ? 'text-signal-buy'
-                      : 'text-signal-sell'
+                    asset.price_vs_sma50 === 'above' ? 'text-signal-buy' : 'text-signal-sell'
                   )}
                 >
-                  {asset.price_vs_sma100_15m === 'above' ? 'Acima' : 'Abaixo'}
+                  {asset.price_vs_sma50 === 'above' ? 'Acima' : 'Abaixo'}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  ({asset.distance_to_sma100?.toFixed(1)}%)
+                  ({asset.distance_to_sma50?.toFixed(1)}%)
                 </span>
               </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <p className="text-xs text-muted-foreground mb-1">BB Width</p>
-              <p className="text-lg font-bold font-mono">
-                {asset.bb_width_15m?.toFixed(4) ?? '—'}
-              </p>
+              <p className="text-xs text-muted-foreground mb-1">vs SMA200</p>
+              <div className="flex items-center gap-1">
+                {asset.price_vs_sma200 === 'above' ? (
+                  <ChevronUp className="h-4 w-4 text-signal-buy" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-signal-sell" />
+                )}
+                <span
+                  className={cn(
+                    'text-sm font-medium',
+                    asset.price_vs_sma200 === 'above' ? 'text-signal-buy' : 'text-signal-sell'
+                  )}
+                >
+                  {asset.price_vs_sma200 === 'above' ? 'Acima' : 'Abaixo'}
+                </span>
+              </div>
             </CardContent>
           </Card>
         </div>
 
         {/* Graficos */}
         {isLoading ? (
-          <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
-            Carregando gráficos...
+          <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
+            Carregando graficos...
           </div>
         ) : (
-          <Tabs defaultValue="15m" className="space-y-4">
+          <Tabs defaultValue="1d" className="space-y-4">
             <TabsList>
-              <TabsTrigger value="15m" className="flex items-center gap-2">
-                <Clock className="h-4 w-4" />
-                15 Minutos
-              </TabsTrigger>
               <TabsTrigger value="1d" className="flex items-center gap-2">
                 <BarChart3 className="h-4 w-4" />
-                Diário
+                Diario
+              </TabsTrigger>
+              <TabsTrigger value="1wk" className="flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
+                Semanal
               </TabsTrigger>
             </TabsList>
-
-            <TabsContent value="15m" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Activity className="h-4 w-4 text-primary" />
-                    Preço com Bollinger Bands (20, 2) e SMA100
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {chartData15m.length > 0 ? (
-                    <PriceChart data={chartData15m} />
-                  ) : (
-                    <p className="text-sm text-muted-foreground text-center py-8">
-                      Sem dados disponíveis para este período.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">RSI (14)</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {rsiData15m.length > 0 ? (
-                    <RSIChart data={rsiData15m} />
-                  ) : (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      Dados insuficientes para RSI.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
 
             <TabsContent value="1d" className="space-y-4">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Activity className="h-4 w-4 text-primary" />
-                    Preço com Bollinger Bands (20, 2) e SMA100
+                    Preco | BB(20,2) | SMA50 | SMA200
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -479,14 +515,14 @@ const AssetDetail = () => {
                     <PriceChart data={chartData1d} />
                   ) : (
                     <p className="text-sm text-muted-foreground text-center py-8">
-                      Sem dados disponíveis para este período.
+                      Sem dados disponiveis.
                     </p>
                   )}
                 </CardContent>
               </Card>
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-sm">RSI (14)</CardTitle>
+                  <CardTitle className="text-sm">RSI (14) - Diario | Sobrevenda &lt;45 | Sobrecompra &gt;60</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {rsiData1d.length > 0 ? (
@@ -499,44 +535,98 @@ const AssetDetail = () => {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            <TabsContent value="1wk" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-primary" />
+                    Preco Semanal | BB(20,2) | SMA50 | SMA200
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {chartData1wk.length > 0 ? (
+                    <PriceChart data={chartData1wk} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      Sem dados disponiveis.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">RSI (14) - Semanal</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {rsiData1wk.length > 0 ? (
+                    <RSIChart data={rsiData1wk} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      Dados insuficientes para RSI.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
           </Tabs>
         )}
 
-        {/* Analise do Sinal */}
+        {/* Analise do Setup */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm flex items-center gap-2">
               <Activity className="h-4 w-4 text-primary" />
-              Análise do Sinal
+              Analise do Setup
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <SignalBadge
-                  side={asset.signal_side}
-                  confidence={asset.confidence}
-                />
-                <span className="text-sm text-muted-foreground">
-                  {asset.signal_side === 'buy'
-                    ? 'Indicativo de potencial entrada comprada'
-                    : asset.signal_side === 'sell'
-                    ? 'Indicativo de potencial entrada vendida'
-                    : 'Sem sinal claro no momento'}
-                </span>
+                <SignalBadge side={asset.signal_side} confidence={asset.confidence} />
+                {signalInfo && (
+                  <span className={cn('text-sm font-medium', signalInfo.color)}>
+                    {signalInfo.label}
+                  </span>
+                )}
               </div>
+
+              {signalInfo && (
+                <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
+                  {signalInfo.desc}
+                </div>
+              )}
+
               <div className="border-t border-border pt-4">
-                <h4 className="text-sm font-medium mb-2">Racional:</h4>
-                <ul className="space-y-2">
-                  {generateRationale().map((reason, idx) => (
-                    <li
-                      key={idx}
-                      className="text-sm text-muted-foreground flex items-start gap-2"
-                    >
-                      <span className="text-primary mt-1">•</span>
-                      {reason}
-                    </li>
-                  ))}
+                <h4 className="text-sm font-medium mb-2">Condicoes identificadas:</h4>
+                <ul className="space-y-2 text-sm text-muted-foreground">
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-1">&bull;</span>
+                    BB Width: {asset.bb_width_1d?.toFixed(4) ?? 'N/A'}
+                    {asset.is_squeeze && (
+                      <span className="ml-1 text-yellow-400 font-medium">(squeeze ativo)</span>
+                    )}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-1">&bull;</span>
+                    RSI Diario: {asset.rsi_1d?.toFixed(1) ?? 'N/A'}
+                    {(asset.rsi_1d ?? 50) < 45 && ' — Sobrevenda (favoravel a compra)'}
+                    {(asset.rsi_1d ?? 50) > 60 && ' — Sobrecompra (favoravel a venda/saida)'}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-1">&bull;</span>
+                    RSI Semanal: {asset.rsi_1wk?.toFixed(1) ?? 'N/A'} (confirmacao de tendencia)
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-1">&bull;</span>
+                    Posicao vs SMA50: {asset.price_vs_sma50 === 'above' ? 'Acima' : 'Abaixo'}
+                    {asset.distance_to_sma50 !== null &&
+                      ` (${asset.distance_to_sma50 >= 0 ? '+' : ''}${asset.distance_to_sma50.toFixed(1)}%)`}
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-1">&bull;</span>
+                    Posicao vs SMA200: {asset.price_vs_sma200 === 'above' ? 'Acima (tendencia macro altista)' : 'Abaixo (tendencia macro baixista)'}
+                  </li>
                 </ul>
               </div>
             </div>
