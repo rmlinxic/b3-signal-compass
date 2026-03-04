@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { AssetTable } from '@/components/dashboard/AssetTable';
 import { DashboardFiltersBar } from '@/components/dashboard/DashboardFiltersBar';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
 import { DashboardFilters, SortConfig, AssetWithSignal } from '@/types/market';
-import { RefreshCw, Clock, TrendingUp } from 'lucide-react';
+import { RefreshCw, Clock, TrendingUp, Timer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   getDashboardAssets,
@@ -18,40 +18,85 @@ import {
 } from '@/lib/supabaseDataStore';
 import { fetchDailyTop50 } from '@/lib/topVolumeService';
 
-const Dashboard = () => {
-  const [filters, setFilters] = useState<DashboardFilters>({
-    assetType: 'all',
-    squeezeOnly: false,
-    signalSide: 'all',
-    rsiFilter: 'all',
-    smaProximity: null,
-  });
+// ---------------------------------------------------------------------------
+// Utils
+// ---------------------------------------------------------------------------
 
+const fmtCountdown = (sec: number): string => {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+};
+
+const INITIAL_FILTERS: DashboardFilters = {
+  assetType: 'all',
+  squeezeOnly: false,
+  signalSide: 'all',
+  signalType: 'all',
+  rsiFilter: 'all',
+  smaProximity: null,
+};
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+const Dashboard = () => {
+  const [filters, setFilters] = useState<DashboardFilters>(INITIAL_FILTERS);
   const [sortConfig, setSortConfig] = useState<SortConfig | null>({
     key: 'confidence',
     direction: 'desc',
   });
-
   const [assets, setAssets] = useState<AssetWithSignal[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDailyInit, setIsDailyInit] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // ─── Inicialização do app ──────────────────────────────────────────────────────
+  // Countdown em segundos ate a proxima atualizacao automatica
+  const [countdownSec, setCountdownSec] = useState(0);
+
+  // Ref para permitir reset do countdown a partir de qualquer lugar
+  const countdownRef = useRef(0);
+  const intervalIdRef = useRef<number | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // Core refresh function
+  // ---------------------------------------------------------------------------
+  const doRefresh = useCallback(async () => {
+    const settings = getSettings();
+    // Reinicia o countdown
+    const totalSec = settings.updateInterval * 60;
+    countdownRef.current = totalSec;
+    setCountdownSec(totalSec);
+
+    setIsRefreshing(true);
+    try {
+      const updated = await refreshDashboardAssets(settings.dataProvider);
+      setAssets(updated);
+      setLastUpdate(new Date());
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Falha ao buscar dados de mercado.'
+      );
+    }
+    setIsRefreshing(false);
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Inicializacao: lista diaria + primeiro fetch
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     const init = async () => {
-      // Exibe dados em cache imediatamente (sem travar a UI)
+      // Exibe cache imediatamente
       setAssets(getDashboardAssets());
 
       try {
-        // Verifica globalmente (via Supabase) se a lista precisa ser atualizada.
-        // O PRIMEIRO usuário do dia dispara a atualização para todos.
         const stale = await isAssetListStaleToday();
         if (stale) {
           setIsDailyInit(true);
           const top50 = await fetchDailyTop50();
-          // Atualiza Supabase (compartilhado) e localStorage (cache local)
           await upsertAssetList(top50);
           replaceMonitoredAssets(top50);
           setIsDailyInit(false);
@@ -61,46 +106,65 @@ const Dashboard = () => {
         setIsDailyInit(false);
       }
 
-      // Busca cotações e recalcula sinais (salva no Supabase automaticamente)
-      setIsRefreshing(true);
-      try {
-        const updated = await refreshDashboardAssets(getSettings().dataProvider);
-        setAssets(updated);
-        setLastUpdate(new Date());
-        setErrorMessage(null);
-      } catch (error) {
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : 'Falha ao buscar dados de mercado.'
-        );
-      }
-      setIsRefreshing(false);
+      await doRefresh();
     };
 
     init();
-  }, []);
+  }, [doRefresh]);
 
-  // ─── Polling periódico ────────────────────────────────────────────────────────
+  // ---------------------------------------------------------------------------
+  // Tick a cada 1 segundo: decrementa countdown e dispara refresh quando chega 0
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     const settings = getSettings();
-    const intervalMs = settings.updateInterval * 60 * 1000;
-    const id = window.setInterval(() => {
-      refreshDashboardAssets(settings.dataProvider)
-        .then((updated) => {
-          setAssets(updated);
-          setLastUpdate(new Date());
-          setErrorMessage(null);
-        })
-        .catch((err) =>
-          setErrorMessage(
-            err instanceof Error ? err.message : 'Falha ao buscar dados.'
-          )
-        );
-    }, intervalMs);
-    return () => window.clearInterval(id);
+    const totalSec = settings.updateInterval * 60;
+    countdownRef.current = totalSec;
+    setCountdownSec(totalSec);
+
+    const tick = () => {
+      countdownRef.current -= 1;
+      setCountdownSec(countdownRef.current);
+
+      if (countdownRef.current <= 0) {
+        const s = getSettings();
+        // Reseta o countdown imediatamente para evitar multiplos disparos
+        countdownRef.current = s.updateInterval * 60;
+        setCountdownSec(countdownRef.current);
+
+        // Refresh silencioso (sem spinner bloqueante)
+        refreshDashboardAssets(s.dataProvider)
+          .then((updated) => {
+            setAssets(updated);
+            setLastUpdate(new Date());
+            setErrorMessage(null);
+          })
+          .catch((err) =>
+            setErrorMessage(
+              err instanceof Error ? err.message : 'Falha ao buscar dados.'
+            )
+          );
+      }
+    };
+
+    intervalIdRef.current = window.setInterval(tick, 1000);
+    return () => {
+      if (intervalIdRef.current !== null) {
+        window.clearInterval(intervalIdRef.current);
+      }
+    };
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Refresh manual
+  // ---------------------------------------------------------------------------
+  const handleRefresh = async () => {
+    if (isRefreshing || isDailyInit) return;
+    await doRefresh();
+  };
+
+  // ---------------------------------------------------------------------------
+  // Filtragem e ordenacao
+  // ---------------------------------------------------------------------------
   const sortedAssets = useMemo(() => {
     if (!sortConfig) return assets;
     return [...assets].sort((a, b) => {
@@ -118,43 +182,55 @@ const Dashboard = () => {
     });
   }, [assets, sortConfig]);
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await new Promise((r) => setTimeout(r, 400));
-    try {
-      const updated = await refreshDashboardAssets(getSettings().dataProvider);
-      setAssets(updated);
-      setLastUpdate(new Date());
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : 'Falha ao buscar dados.'
-      );
-    }
-    setIsRefreshing(false);
-  };
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+  const isUrgent = countdownSec <= 30 && countdownSec > 0;
 
   return (
     <MainLayout>
       <div className="space-y-6 animate-slide-up">
+
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
             <p className="text-sm text-muted-foreground">
-              Top 50 ações por volume de negociação da B3
+              Top 50 acoes por volume de negociacao da B3
             </p>
           </div>
-          <div className="flex items-center gap-3">
+
+          <div className="flex flex-wrap items-center gap-3">
             {isDailyInit && (
               <div className="flex items-center gap-2 text-xs text-blue-500 animate-pulse">
                 <TrendingUp className="h-3 w-3" />
                 <span>Atualizando lista de ativos...</span>
               </div>
             )}
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+
+            {/* Ultima atualizacao */}
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
-              <span>Atualizado: {lastUpdate.toLocaleTimeString('pt-BR')}</span>
+              <span>{lastUpdate.toLocaleTimeString('pt-BR')}</span>
             </div>
+
+            {/* Countdown */}
+            <div
+              className={`flex items-center gap-1.5 text-xs font-mono ${
+                isUrgent
+                  ? 'text-signal-buy animate-pulse'
+                  : 'text-muted-foreground'
+              }`}
+            >
+              <Timer className="h-3 w-3" />
+              <span>
+                {isRefreshing
+                  ? 'Atualizando...'
+                  : `prox. ${fmtCountdown(countdownSec)}`}
+              </span>
+            </div>
+
+            {/* Botao manual */}
             <Button
               variant="outline"
               size="sm"
@@ -162,7 +238,9 @@ const Dashboard = () => {
               disabled={isRefreshing || isDailyInit}
             >
               <RefreshCw
-                className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`}
+                className={`h-4 w-4 mr-2 ${
+                  isRefreshing ? 'animate-spin' : ''
+                }`}
               />
               Atualizar
             </Button>
