@@ -1,5 +1,5 @@
 import { AssetWithSignal, Bar, SignalSide, Setting } from '@/types/market';
-import { topETFs, topStocks } from '@/lib/mockData';
+import { LIQUID_POOL } from '@/lib/stockPool';
 import {
   fetchBrapiHistoricalBars,
   fetchBrapiQuotes,
@@ -66,39 +66,61 @@ const getSettingsFromStorage = (): SettingsState => {
 };
 
 export const getSettings = (): SettingsState => getSettingsFromStorage();
-
 export const saveSettings = (settings: SettingsState): void => {
   localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
 };
-
 export const resetSettings = (): SettingsState => {
   saveSettings(DEFAULT_SETTINGS);
   return DEFAULT_SETTINGS;
 };
 
+/**
+ * Gera sinal de compra/venda/neutro com base nos indicadores calculados.
+ *
+ * Critérios:
+ *  - COMPRA:  squeeze + RSI 15m > 50 + preço acima da SMA100
+ *  - VENDA:   squeeze + RSI 15m < 50 + preço abaixo da SMA100
+ *  - NEUTRO:  qualquer outro caso (squeeze sem confirmação, ou sem squeeze)
+ *
+ * Pontuação de confiança (0–100), sumário dos 4 pilares (0–25 cada):
+ *  1. Squeeze detectado              → +25 pts (condição obrigatória)
+ *  2. Força do RSI 15m               → |RSI-50| / 40 * 25
+ *  3. Distância percentual da SMA100 → min(|dist|, 5%) / 5% * 25
+ *  4. Alinhamento do RSI 1d          → mesma direção do 15m: |RSI1d-50|/40*25
+ */
 const generateSignal = (
   isSqueeze: boolean,
   rsi15m: number,
-  distanceToSma: number
-): {
-  side: SignalSide;
-  confidence: number;
-} => {
-  let signalSide: SignalSide = 'neutral';
-  let confidence = 0;
+  distanceToSma: number,
+  rsi1d: number | null = null
+): { side: SignalSide; confidence: number } => {
+  if (!isSqueeze) return { side: 'neutral', confidence: 0 };
 
-  if (isSqueeze && rsi15m > 50 && distanceToSma > 0) {
-    signalSide = 'buy';
-    confidence = Math.floor(50 + Math.random() * 50);
-  } else if (isSqueeze && rsi15m < 50 && distanceToSma < 0) {
-    signalSide = 'sell';
-    confidence = Math.floor(50 + Math.random() * 50);
-  } else if (Math.random() > 0.7) {
-    signalSide = Math.random() > 0.5 ? 'buy' : 'sell';
-    confidence = Math.floor(20 + Math.random() * 40);
+  const bullish = rsi15m > 50 && distanceToSma > 0;
+  const bearish = rsi15m < 50 && distanceToSma < 0;
+
+  if (!bullish && !bearish) return { side: 'neutral', confidence: 0 };
+
+  const side: SignalSide = bullish ? 'buy' : 'sell';
+
+  // Pilar 1: squeeze (base)
+  let score = 25;
+
+  // Pilar 2: força RSI 15m (distância até 40pts do centro)
+  score += (Math.min(Math.abs(rsi15m - 50), 40) / 40) * 25;
+
+  // Pilar 3: distância da SMA100 (até 5% = pontuação máxima)
+  score += (Math.min(Math.abs(distanceToSma), 5) / 5) * 25;
+
+  // Pilar 4: alinhamento RSI 1d (só pontua se confirma direção)
+  if (rsi1d !== null) {
+    const aligned = bullish ? rsi1d > 50 : rsi1d < 50;
+    if (aligned) {
+      score += (Math.min(Math.abs(rsi1d - 50), 40) / 40) * 25;
+    }
   }
 
-  return { side: signalSide, confidence };
+  return { side, confidence: Math.round(Math.min(score, 100)) };
 };
 
 const calculateSMA = (closes: number[], period: number): number | null => {
@@ -154,12 +176,7 @@ const computeIndicators = (
   const bb = calculateBB(closes, settings.bbPeriod, settings.bbStd);
   const sma100 = calculateSMA(closes, settings.smaPeriod);
   const rsi = calculateRSI(closes, settings.rsiPeriod);
-  return {
-    bbWidth: bb?.width ?? null,
-    sma100,
-    rsi,
-    lastClose,
-  };
+  return { bbWidth: bb?.width ?? null, sma100, rsi, lastClose };
 };
 
 export const createAssetWithSignal = (
@@ -168,17 +185,7 @@ export const createAssetWithSignal = (
   type: 'stock' | 'etf',
   index: number
 ): AssetWithSignal => {
-  const basePrice = 10 + Math.random() * 90;
-  const priceChange = (Math.random() - 0.5) * 10;
-  const volume = Math.floor(Math.random() * 50000000) + 1000000;
-  const bbWidth = Math.random() * 0.15;
-  const isSqueeze = bbWidth < getSettingsFromStorage().squeezeThreshold;
-  const rsi15m = 20 + Math.random() * 60;
-  const rsi1d = 25 + Math.random() * 50;
-  const distanceToSma = (Math.random() - 0.5) * 10;
-  const signal = generateSignal(isSqueeze, rsi15m, distanceToSma);
   const now = new Date().toISOString();
-
   return {
     id: `local-${type}-${index}`,
     ticker,
@@ -187,30 +194,26 @@ export const createAssetWithSignal = (
     is_active: true,
     created_at: now,
     updated_at: now,
-    last_price: parseFloat(basePrice.toFixed(2)),
-    price_change_pct: parseFloat(priceChange.toFixed(2)),
-    volume,
-    bb_width_15m: parseFloat(bbWidth.toFixed(4)),
-    is_squeeze: isSqueeze,
-    price_vs_sma100_15m: distanceToSma > 0 ? 'above' : 'below',
-    price_vs_sma100_1d: Math.random() > 0.5 ? 'above' : 'below',
-    distance_to_sma100: parseFloat(distanceToSma.toFixed(2)),
-    rsi_15m: parseFloat(rsi15m.toFixed(2)),
-    rsi_1d: parseFloat(rsi1d.toFixed(2)),
-    signal_side: signal.side,
-    confidence: signal.confidence,
+    last_price: 0,
+    price_change_pct: 0,
+    volume: 0,
+    bb_width_15m: null,
+    is_squeeze: false,
+    price_vs_sma100_15m: null,
+    price_vs_sma100_1d: null,
+    distance_to_sma100: null,
+    rsi_15m: null,
+    rsi_1d: null,
+    signal_side: 'neutral',
+    confidence: 0,
     last_updated: now,
   };
 };
 
 const seedAssets = (): AssetWithSignal[] => {
-  const stocks = topStocks.map((asset, index) =>
-    createAssetWithSignal(asset.ticker, asset.name, 'stock', index)
+  const allAssets = LIQUID_POOL.map((stock, index) =>
+    createAssetWithSignal(stock.ticker, stock.name, stock.type, index)
   );
-  const etfs = topETFs.map((asset, index) =>
-    createAssetWithSignal(asset.ticker, asset.name, 'etf', index + stocks.length)
-  );
-  const allAssets = [...stocks, ...etfs];
   localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(allAssets));
   return allAssets;
 };
@@ -228,10 +231,6 @@ const getAssetsFromStorage = (): AssetWithSignal[] => {
 
 export const getDashboardAssets = (): AssetWithSignal[] => getAssetsFromStorage();
 
-/**
- * Substitui a lista completa de ativos monitorados.
- * Chamado após fetchDailyTop50() para atualizar a lista do dia.
- */
 export const replaceMonitoredAssets = (
   stocks: Array<{ ticker: string; name: string; type: 'stock' | 'etf' }>
 ): AssetWithSignal[] => {
@@ -242,47 +241,7 @@ export const replaceMonitoredAssets = (
   return newAssets;
 };
 
-const simulateDashboardAssets = (): AssetWithSignal[] => {
-  const settings = getSettingsFromStorage();
-  const updated = getAssetsFromStorage().map((asset) => {
-    const drift = (Math.random() - 0.5) * 0.03;
-    const nextPrice = toNumber(asset.last_price * (1 + drift), 0.5, 9999);
-    const priceChangePct = drift * 100;
-    const nextVolume = Math.max(
-      10000,
-      Math.floor(asset.volume * (0.8 + Math.random() * 0.4))
-    );
-    const bbWidth = toNumber(Math.random() * 0.12, 0.01, 0.2);
-    const isSqueeze = bbWidth < settings.squeezeThreshold;
-    const distanceToSma = parseFloat(((Math.random() - 0.5) * 10).toFixed(2));
-    const rsi15m = toNumber(20 + Math.random() * 60, 10, 90);
-    const rsi1d = toNumber(25 + Math.random() * 50, 10, 90);
-    const signal = generateSignal(isSqueeze, rsi15m, distanceToSma);
-
-    return {
-      ...asset,
-      last_price: parseFloat(nextPrice.toFixed(2)),
-      price_change_pct: parseFloat(priceChangePct.toFixed(2)),
-      volume: nextVolume,
-      bb_width_15m: parseFloat(bbWidth.toFixed(4)),
-      is_squeeze: isSqueeze,
-      price_vs_sma100_15m: distanceToSma > 0 ? 'above' : 'below',
-      price_vs_sma100_1d: Math.random() > 0.5 ? 'above' : 'below',
-      distance_to_sma100: distanceToSma,
-      rsi_15m: parseFloat(rsi15m.toFixed(2)),
-      rsi_1d: parseFloat(rsi1d.toFixed(2)),
-      signal_side: signal.side,
-      confidence: signal.confidence,
-      last_updated: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-  });
-
-  localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(updated));
-  return updated;
-};
-
-// Busca cotação: tenta Yahoo Finance primeiro, cai para BRAPI se falhar
+// Busca cotação: Yahoo Finance primeiro, BRAPI como fallback
 const fetchQuoteWithFallback = async (
   ticker: string
 ): Promise<YahooQuote | null> => {
@@ -307,19 +266,17 @@ const fetchQuoteWithFallback = async (
   }
 };
 
-// Busca histórico: tenta Yahoo Finance primeiro, cai para BRAPI se falhar
+// Busca histórico: Yahoo Finance primeiro, BRAPI como fallback
 const fetchBarsWithFallback = async (
   ticker: string,
   timeframe: '15m' | '1d'
 ): Promise<Bar[]> => {
   try {
     return await fetchYahooHistoricalBars(ticker, timeframe);
-  } catch (yahooErr) {
-    console.warn(`[Yahoo] Histórico falhou para ${ticker} (${timeframe}):`, yahooErr);
+  } catch {
     try {
       return await fetchBrapiHistoricalBars(ticker, timeframe);
-    } catch (brapiErr) {
-      console.warn(`[BRAPI] Histórico fallback falhou para ${ticker} (${timeframe}):`, brapiErr);
+    } catch {
       return [];
     }
   }
@@ -328,13 +285,18 @@ const fetchBarsWithFallback = async (
 export const updateDashboardAssets = async (
   provider: SettingsState['dataProvider']
 ): Promise<AssetWithSignal[]> => {
-  if (provider === 'mock') {
-    return simulateDashboardAssets();
-  }
-
   const assets = getAssetsFromStorage();
   const settings = getSettingsFromStorage();
   const now = new Date().toISOString();
+
+  // 'mock' mantido apenas como modo de desenvolvimento
+  if (provider === 'mock') {
+    return assets.map((asset) => ({
+      ...asset,
+      last_updated: now,
+      updated_at: now,
+    }));
+  }
 
   try {
     const updated = await Promise.all(
@@ -361,10 +323,17 @@ export const updateDashboardAssets = async (
         const isSqueeze =
           indicators15m.bbWidth !== null
             ? indicators15m.bbWidth < settings.squeezeThreshold
-            : asset.is_squeeze ?? false;
+            : false;
 
         const rsi15m = indicators15m.rsi ?? asset.rsi_15m ?? 50;
-        const signal = generateSignal(isSqueeze, rsi15m, distanceToSma ?? 0);
+        const rsi1d = indicators1d.rsi ?? asset.rsi_1d ?? null;
+
+        const signal = generateSignal(
+          isSqueeze,
+          rsi15m,
+          distanceToSma ?? 0,
+          rsi1d
+        );
 
         return {
           ...asset,
@@ -387,8 +356,8 @@ export const updateDashboardAssets = async (
                 : 'below'
               : asset.price_vs_sma100_1d,
           distance_to_sma100: distanceToSma ?? asset.distance_to_sma100,
-          rsi_15m: indicators15m.rsi ?? asset.rsi_15m,
-          rsi_1d: indicators1d.rsi ?? asset.rsi_1d,
+          rsi_15m: rsi15m,
+          rsi_1d: rsi1d,
           signal_side: signal.side,
           confidence: signal.confidence,
           last_updated: now,
@@ -419,12 +388,7 @@ export const addAsset = (
 ): AssetWithSignal[] => {
   const existing = getAssetsFromStorage();
   const normalizedTicker = ticker.toUpperCase();
-  const alreadyExists = existing.some(
-    (asset) => asset.ticker === normalizedTicker
-  );
-
-  if (alreadyExists) return existing;
-
+  if (existing.some((a) => a.ticker === normalizedTicker)) return existing;
   const newAsset = createAssetWithSignal(
     normalizedTicker,
     name,
@@ -469,10 +433,8 @@ export interface StoredBarsPayload {
   data: Bar[];
 }
 
-export const getStoredBars = (
-  assetId: string,
-  timeframe: string
-): string | null => localStorage.getItem(getBarsKey(assetId, timeframe));
+export const getStoredBars = (assetId: string, timeframe: string): string | null =>
+  localStorage.getItem(getBarsKey(assetId, timeframe));
 
 export const getCachedBars = (
   assetId: string,
@@ -485,30 +447,21 @@ export const getCachedBars = (
     const parsed = JSON.parse(stored) as StoredBarsPayload | Bar[];
     if (Array.isArray(parsed)) return parsed;
     const cachedAt = new Date(parsed.timestamp).getTime();
-    if (Number.isNaN(cachedAt)) return null;
-    if (Date.now() - cachedAt > maxAgeMs) return null;
+    if (Number.isNaN(cachedAt) || Date.now() - cachedAt > maxAgeMs) return null;
     return parsed.data;
   } catch {
     return null;
   }
 };
 
-export const saveStoredBars = (
-  assetId: string,
-  timeframe: string,
-  data: unknown
-): void => {
+export const saveStoredBars = (assetId: string, timeframe: string, data: unknown): void => {
   localStorage.setItem(getBarsKey(assetId, timeframe), JSON.stringify(data));
 };
 
-export const saveCachedBars = (
-  assetId: string,
-  timeframe: string,
-  data: Bar[]
-): void => {
-  const payload: StoredBarsPayload = {
-    timestamp: new Date().toISOString(),
-    data,
-  };
+export const saveCachedBars = (assetId: string, timeframe: string, data: Bar[]): void => {
+  const payload: StoredBarsPayload = { timestamp: new Date().toISOString(), data };
   saveStoredBars(assetId, timeframe, payload);
 };
+
+// ─── toNumber export para uso externo (compat) ────────────────────────────────
+export { toNumber };
