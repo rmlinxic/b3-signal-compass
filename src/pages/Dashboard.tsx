@@ -4,13 +4,18 @@ import { AssetTable } from '@/components/dashboard/AssetTable';
 import { DashboardFiltersBar } from '@/components/dashboard/DashboardFiltersBar';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
 import { DashboardFilters, SortConfig, AssetWithSignal } from '@/types/market';
-import { RefreshCw, Clock } from 'lucide-react';
+import { RefreshCw, Clock, TrendingUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   getDashboardAssets,
   getSettings,
   refreshDashboardAssets,
+  replaceMonitoredAssets,
 } from '@/lib/localDataStore';
+import {
+  isFirstAccessToday,
+  fetchDailyTop50,
+} from '@/lib/topVolumeService';
 
 const Dashboard = () => {
   const [filters, setFilters] = useState<DashboardFilters>({
@@ -28,25 +33,69 @@ const Dashboard = () => {
 
   const [assets, setAssets] = useState<AssetWithSignal[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isDailyInit, setIsDailyInit] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // ─── Inicialização diária + carga inicial ────────────────────────────────────
   useEffect(() => {
-    const initialAssets = getDashboardAssets();
-    setAssets(initialAssets);
-    refreshDashboardAssets(getSettings().dataProvider)
-      .then((updated) => {
+    const init = async () => {
+      // Exibe imediatamente o que está em cache (sem bloquear a UI)
+      setAssets(getDashboardAssets());
+
+      if (isFirstAccessToday()) {
+        setIsDailyInit(true);
+        try {
+          const top50 = await fetchDailyTop50();
+          const freshAssets = replaceMonitoredAssets(top50);
+          setAssets(freshAssets);
+        } catch (err) {
+          console.error('[DailyInit] Erro ao buscar top 50:', err);
+        }
+        setIsDailyInit(false);
+      }
+
+      // Atualiza cotações e indicadores após definir a lista
+      setIsRefreshing(true);
+      try {
+        const updated = await refreshDashboardAssets(getSettings().dataProvider);
         setAssets(updated);
         setLastUpdate(new Date());
         setErrorMessage(null);
-      })
-      .catch((error) => {
+      } catch (error) {
         setErrorMessage(
           error instanceof Error
             ? error.message
-            : 'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+            : 'Falha ao buscar dados de mercado. Tente novamente em instantes.'
         );
-      });
+      }
+      setIsRefreshing(false);
+    };
+
+    init();
+  }, []);
+
+  // ─── Polling periódico (todos os provedores) ─────────────────────────────────
+  useEffect(() => {
+    const settings = getSettings();
+    const intervalMs = settings.updateInterval * 60 * 1000;
+    const intervalId = window.setInterval(() => {
+      refreshDashboardAssets(settings.dataProvider)
+        .then((updated) => {
+          setAssets(updated);
+          setLastUpdate(new Date());
+          setErrorMessage(null);
+        })
+        .catch((error) => {
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : 'Falha ao buscar dados de mercado.'
+          );
+        });
+    }, intervalMs);
+
+    return () => window.clearInterval(intervalId);
   }, []);
 
   const sortedAssets = useMemo(() => {
@@ -85,35 +134,11 @@ const Dashboard = () => {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : 'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
+          : 'Falha ao buscar dados de mercado. Tente novamente em instantes.'
       );
     }
     setIsRefreshing(false);
   };
-
-  useEffect(() => {
-    const settings = getSettings();
-    if (settings.dataProvider !== 'brapi') return;
-
-    const intervalMs = settings.updateInterval * 60 * 1000;
-    const intervalId = window.setInterval(() => {
-      refreshDashboardAssets(settings.dataProvider)
-        .then((updated) => {
-          setAssets(updated);
-          setLastUpdate(new Date());
-          setErrorMessage(null);
-        })
-        .catch((error) => {
-          setErrorMessage(
-            error instanceof Error
-              ? error.message
-              : 'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
-          );
-        });
-    }, intervalMs);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
 
   return (
     <MainLayout>
@@ -123,10 +148,16 @@ const Dashboard = () => {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
             <p className="text-sm text-muted-foreground">
-              Monitoramento das 100 principais ações e ETFs da B3
+              Top 50 ações por volume de negociação da B3
             </p>
           </div>
           <div className="flex items-center gap-3">
+            {isDailyInit && (
+              <div className="flex items-center gap-2 text-xs text-blue-500 animate-pulse">
+                <TrendingUp className="h-3 w-3" />
+                <span>Atualizando lista de ativos...</span>
+              </div>
+            )}
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
               <span>
@@ -137,17 +168,19 @@ const Dashboard = () => {
               variant="outline"
               size="sm"
               onClick={handleRefresh}
-              disabled={isRefreshing}
+              disabled={isRefreshing || isDailyInit}
             >
               <RefreshCw
-                className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`}
+                className={`h-4 w-4 mr-2 ${
+                  isRefreshing ? 'animate-spin' : ''
+                }`}
               />
               Atualizar
             </Button>
           </div>
         </div>
 
-        {/* Stats */}
+        {/* Erro */}
         {errorMessage && (
           <div
             role="alert"
@@ -159,10 +192,8 @@ const Dashboard = () => {
 
         <DashboardStats assets={assets} />
 
-        {/* Filters */}
         <DashboardFiltersBar filters={filters} onFiltersChange={setFilters} />
 
-        {/* Table */}
         <AssetTable
           assets={sortedAssets}
           filters={filters}

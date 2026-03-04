@@ -43,7 +43,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   squeezePercentile: 10,
   updateInterval: 15,
   dataProvider: 'yahoo',
-  brapiToken: import.meta.env.VITE_BRAPI_TOKEN ?? '',
+  brapiToken: (import.meta.env.VITE_BRAPI_TOKEN as string | undefined) ?? '',
   confidenceWeights: {
     squeeze: 25,
     smaCross: 25,
@@ -162,7 +162,7 @@ const computeIndicators = (
   };
 };
 
-const createAssetWithSignal = (
+export const createAssetWithSignal = (
   ticker: string,
   name: string,
   type: 'stock' | 'etf',
@@ -227,6 +227,20 @@ const getAssetsFromStorage = (): AssetWithSignal[] => {
 };
 
 export const getDashboardAssets = (): AssetWithSignal[] => getAssetsFromStorage();
+
+/**
+ * Substitui a lista completa de ativos monitorados.
+ * Chamado após fetchDailyTop50() para atualizar a lista do dia.
+ */
+export const replaceMonitoredAssets = (
+  stocks: Array<{ ticker: string; name: string; type: 'stock' | 'etf' }>
+): AssetWithSignal[] => {
+  const newAssets = stocks.map((stock, index) =>
+    createAssetWithSignal(stock.ticker, stock.name, stock.type, index)
+  );
+  localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(newAssets));
+  return newAssets;
+};
 
 const simulateDashboardAssets = (): AssetWithSignal[] => {
   const settings = getSettingsFromStorage();
