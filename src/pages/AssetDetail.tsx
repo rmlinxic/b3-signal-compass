@@ -29,13 +29,12 @@ import {
   YAxis,
   Tooltip,
   ReferenceLine,
-  Line,
-  Bar as RechartsBar,
   Area,
 } from 'recharts';
 import { useEffect, useMemo, useState } from 'react';
 import type { Bar } from '@/types/market';
 import { cn } from '@/lib/utils';
+import { CandlestickChart } from '@/components/charts/CandlestickChart';
 
 const AssetDetail = () => {
   const { ticker } = useParams<{ ticker: string }>();
@@ -226,77 +225,7 @@ const AssetDetail = () => {
   };
 
   const PriceChart = ({ data }: { data: typeof chartData15m }) => (
-    <div className="h-[400px]">
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart
-          data={data.slice(-80)}
-          margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-        >
-          <XAxis
-            dataKey="time"
-            axisLine={false}
-            tickLine={false}
-            tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-          />
-          <YAxis
-            domain={['auto', 'auto']}
-            axisLine={false}
-            tickLine={false}
-            tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-            tickFormatter={(v) => `R$${Number(v).toFixed(0)}`}
-          />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: 'hsl(var(--card))',
-              border: '1px solid hsl(var(--border))',
-              borderRadius: '8px',
-            }}
-            labelStyle={{ color: 'hsl(var(--foreground))' }}
-            formatter={(value: number, name: string) => [
-              `R$ ${value.toFixed(2)}`,
-              name,
-            ]}
-          />
-          <Area
-            dataKey="bbUpper"
-            stroke="hsl(var(--chart-bb))"
-            strokeWidth={1}
-            fill="hsl(var(--chart-bb))"
-            fillOpacity={0.08}
-            dot={false}
-            legendType="none"
-          />
-          <Area
-            dataKey="bbLower"
-            stroke="hsl(var(--chart-bb))"
-            strokeWidth={1}
-            fill="hsl(var(--background))"
-            fillOpacity={1}
-            dot={false}
-            legendType="none"
-          />
-          <Line
-            dataKey="sma20"
-            stroke="hsl(var(--chart-bb))"
-            strokeWidth={1}
-            dot={false}
-            strokeDasharray="3 3"
-            legendType="none"
-          />
-          <Line
-            dataKey="sma100"
-            stroke="hsl(var(--chart-sma))"
-            strokeWidth={2}
-            dot={false}
-          />
-          <RechartsBar
-            dataKey="close"
-            fill="hsl(var(--chart-candle-up))"
-            opacity={0.8}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
+    <CandlestickChart data={data} height={420} />
   );
 
   const RSIChart = ({ data }: { data: { time: string; rsi: number }[] }) => (
