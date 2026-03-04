@@ -19,6 +19,10 @@ interface YFChartResult {
     regularMarketPrice?: number;
     regularMarketChangePercent?: number;
     regularMarketVolume?: number;
+    /** Nome completo da empresa (ex: 'Petroleo Brasileiro S.A. - Petrobras') */
+    longName?: string;
+    /** Nome abreviado (ex: 'PETROLEO BRASILEIRO-PREF') */
+    shortName?: string;
   };
   timestamp?: number[];
   indicators?: {
@@ -44,6 +48,10 @@ export interface YahooQuote {
   regularMarketPrice?: number;
   regularMarketChangePercent?: number;
   regularMarketVolume?: number;
+  /** Nome completo retornado pelo Yahoo Finance (pode ser undefined) */
+  longName?: string;
+  /** Nome abreviado retornado pelo Yahoo Finance (pode ser undefined) */
+  shortName?: string;
 }
 
 export const fetchYahooQuote = async (ticker: string): Promise<YahooQuote> => {
@@ -67,6 +75,8 @@ export const fetchYahooQuote = async (ticker: string): Promise<YahooQuote> => {
     regularMarketPrice: result.meta.regularMarketPrice,
     regularMarketChangePercent: result.meta.regularMarketChangePercent,
     regularMarketVolume: result.meta.regularMarketVolume,
+    longName: result.meta.longName,
+    shortName: result.meta.shortName,
   };
 };
 
@@ -74,8 +84,6 @@ export const fetchYahooQuote = async (ticker: string): Promise<YahooQuote> => {
  * Ranges usados para swing trade:
  *  1d  -> interval=1d,  range=1y  (~252 barras, suficiente para SMA200)
  *  1wk -> interval=1wk, range=2y  (~104 barras semanais para tendencia)
- *
- * Yahoo Finance suporta esses ranges sem restricao de plano.
  */
 export const fetchYahooHistoricalBars = async (
   ticker: string,

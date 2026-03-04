@@ -102,10 +102,6 @@ interface BBResult {
   width: number;
 }
 
-/**
- * Bollinger Bands(period, stdMultiplier)
- * Usa variancia populacional (/ n), identico ao padrao do TradingView.
- */
 const calculateBB = (
   closes: number[],
   period: number,
@@ -127,30 +123,14 @@ const calculateBB = (
   };
 };
 
-/**
- * RSI de Wilder (identico ao TradingView / MetaTrader).
- *
- * Algoritmo:
- *  1. Calcula todas as variacoes barra a barra.
- *  2. Seed: media simples dos primeiros `period` movimentos.
- *  3. Suavizacao de Wilder para os movimentos restantes:
- *       avgGain = (avgGain * (period - 1) + gain) / period
- *       avgLoss = (avgLoss * (period - 1) + loss) / period
- *  4. RSI = 100 - 100 / (1 + avgGain / avgLoss)
- *
- * A implementacao anterior usava media simples sobre apenas os ultimos
- * `period` candles sem acumular historico, gerando valores incorretos.
- */
 const calculateRSI = (closes: number[], period: number): number | null => {
   if (closes.length < period + 1) return null;
 
-  // Variacao barra a barra
   const changes: number[] = [];
   for (let i = 1; i < closes.length; i++) {
     changes.push(closes[i] - closes[i - 1]);
   }
 
-  // Seed: media simples dos primeiros `period` movimentos
   let avgGain = 0;
   let avgLoss = 0;
   for (let i = 0; i < period; i++) {
@@ -160,7 +140,6 @@ const calculateRSI = (closes: number[], period: number): number | null => {
   avgGain /= period;
   avgLoss /= period;
 
-  // Suavizacao de Wilder para os movimentos restantes
   for (let i = period; i < changes.length; i++) {
     const gain = changes[i] > 0 ? changes[i] : 0;
     const loss = changes[i] < 0 ? -changes[i] : 0;
@@ -172,21 +151,6 @@ const calculateRSI = (closes: number[], period: number): number | null => {
   return 100 - 100 / (1 + avgGain / avgLoss);
 };
 
-/**
- * Logica de sinais para Swing Trade com Bandas de Bollinger.
- *
- * Setups detectados:
- *  1. bb_bounce     -> Preco toca banda inferior + RSI < rsiOversold
- *  2. bb_rejection  -> Preco toca banda superior + RSI > rsiOverbought
- *  3. bb_breakout   -> Squeeze + fechamento ACIMA da banda superior + RSI > 50
- *  4. bb_breakdown  -> Squeeze + fechamento ABAIXO da banda inferior + RSI < 50
- *
- * Pontuacao de confianca (0-100):
- *  - Toque na banda:          ate 30 pts
- *  - Confluencia RSI:         ate 25 pts
- *  - Alinhamento SMA50:       ate 25 pts
- *  - Golden/Death Cross:      ate 20 pts
- */
 const generateSwingSignal = (
   lastClose: number,
   bb: BBResult,
@@ -204,7 +168,6 @@ const generateSwingSignal = (
 
   const isSqueeze = bb.width < settings.squeezeThreshold;
 
-  // BB Squeeze Breakout (maior prioridade)
   if (isSqueeze) {
     if (lastClose > bb.upper && rsi1d > 50) {
       const rsiBon = Math.min((rsi1d - 50) / 50, 1) * 25;
@@ -228,7 +191,6 @@ const generateSwingSignal = (
     }
   }
 
-  // BB Bounce Buy
   if (lastClose <= bb.lower * 1.015 && rsi1d < settings.rsiOversold) {
     const bandScore = lastClose <= bb.lower ? 30 : 15;
     const rsiScore =
@@ -244,7 +206,6 @@ const generateSwingSignal = (
     };
   }
 
-  // BB Rejection Sell
   if (lastClose >= bb.upper * 0.985 && rsi1d > settings.rsiOverbought) {
     const bandScore = lastClose >= bb.upper ? 30 : 15;
     const rsiScore =
@@ -489,6 +450,37 @@ export const addAsset = (
     ...existing,
     createAssetWithSignal(norm, name, type, existing.length),
   ];
+  localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(next));
+  return next;
+};
+
+/**
+ * Remove um ativo da lista de monitoramento pelo ticker.
+ */
+export const removeAsset = (ticker: string): AssetWithSignal[] => {
+  const existing = getAssetsFromStorage();
+  const updated = existing.filter(
+    (a) => a.ticker !== ticker.toUpperCase()
+  );
+  localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(updated));
+  return updated;
+};
+
+/**
+ * Busca cotacao e recalcula indicadores para um unico ativo,
+ * salvando o resultado no localStorage. Util apos adicionar um ativo.
+ */
+export const refreshSingleAsset = async (
+  ticker: string
+): Promise<AssetWithSignal[]> => {
+  const settings = getSettingsFromStorage();
+  const existing = getAssetsFromStorage();
+  const now = new Date().toISOString();
+  const norm = ticker.toUpperCase();
+  const target = existing.find((a) => a.ticker === norm);
+  if (!target) return existing;
+  const refreshed = await computeAsset(target, settings, now);
+  const next = existing.map((a) => (a.ticker === norm ? refreshed : a));
   localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(next));
   return next;
 };
