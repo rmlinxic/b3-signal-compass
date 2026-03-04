@@ -8,7 +8,7 @@ import {
   getDashboardAssets,
   saveCachedBars,
 } from '@/lib/localDataStore';
-import { fetchBrapiHistoricalBars } from '@/lib/brapiClient';
+import { fetchYahooHistoricalBars } from '@/lib/yahooFinanceClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -40,151 +40,145 @@ import { cn } from '@/lib/utils';
 const AssetDetail = () => {
   const { ticker } = useParams<{ ticker: string }>();
 
-  // Find asset data
   const assets = useMemo(() => getDashboardAssets(), []);
   const asset = assets.find((a) => a.ticker === ticker);
 
   const [bars15m, setBars15m] = useState<Bar[]>([]);
   const [bars1d, setBars1d] = useState<Bar[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!asset) return;
-    const loadBars = async (timeframe: '15m' | '1d') => {
-      const cached = getCachedBars(asset.id, timeframe, 10 * 60 * 1000);
-      if (cached) return cached;
 
-      try {
-        const fetched = await fetchBrapiHistoricalBars(asset.ticker, timeframe);
-        saveCachedBars(asset.id, timeframe, fetched);
-        setErrorMessage(null);
-        return fetched;
-      } catch (error) {
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : 'Falha de comunicação com a API da BRAPI. Tente novamente em instantes.'
-        );
-        return [];
-      }
+    const loadBars = async (timeframe: '15m' | '1d'): Promise<Bar[]> => {
+      // Tenta cache primeiro (10 min de validade)
+      const cached = getCachedBars(asset.id, timeframe, 10 * 60 * 1000);
+      if (cached && cached.length > 0) return cached;
+
+      const fetched = await fetchYahooHistoricalBars(asset.ticker, timeframe);
+      saveCachedBars(asset.id, timeframe, fetched);
+      return fetched;
     };
 
-    loadBars('15m').then(setBars15m);
-    loadBars('1d').then(setBars1d);
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    Promise.all([loadBars('15m'), loadBars('1d')])
+      .then(([b15m, b1d]) => {
+        setBars15m(b15m);
+        setBars1d(b1d);
+      })
+      .catch((err) => {
+        setErrorMessage(
+          err instanceof Error
+            ? err.message
+            : 'Falha ao carregar dados do Yahoo Finance.'
+        );
+      })
+      .finally(() => setIsLoading(false));
   }, [asset?.id, asset?.ticker]);
 
-  // Calculate Bollinger Bands and SMA100 for chart display
-  const chartData15m = useMemo(() => {
-    const smaWindow = 20;
-    const bbStd = 2;
-
-    return bars15m.map((bar, idx) => {
-      const slice = bars15m.slice(Math.max(0, idx - smaWindow + 1), idx + 1);
+  // Calcula BB(20,2) + SMA100 para o grafico
+  const buildChartData = (
+    bars: Bar[],
+    timeFmt: (ts: string) => string
+  ) =>
+    bars.map((bar, idx) => {
+      const slice = bars.slice(Math.max(0, idx - 19), idx + 1);
       const closes = slice.map((b) => b.close);
       const sma20 = closes.reduce((a, b) => a + b, 0) / closes.length;
       const std = Math.sqrt(
-        closes.reduce((acc, c) => acc + Math.pow(c - sma20, 2), 0) / closes.length
+        closes.reduce((acc, c) => acc + Math.pow(c - sma20, 2), 0) /
+          closes.length
       );
-
-      const sma100Slice = bars15m.slice(Math.max(0, idx - 99), idx + 1);
+      const sma100Slice = bars.slice(Math.max(0, idx - 99), idx + 1);
       const sma100 =
         sma100Slice.reduce((a, b) => a + b.close, 0) / sma100Slice.length;
 
       return {
-        time: new Date(bar.timestamp).toLocaleTimeString('pt-BR', {
+        time: timeFmt(bar.timestamp),
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+        sma20,
+        bbUpper: sma20 + 2 * std,
+        bbLower: sma20 - 2 * std,
+        sma100,
+      };
+    });
+
+  const chartData15m = useMemo(
+    () =>
+      buildChartData(bars15m, (ts) =>
+        new Date(ts).toLocaleTimeString('pt-BR', {
           hour: '2-digit',
           minute: '2-digit',
-        }),
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-        sma20,
-        bbUpper: sma20 + bbStd * std,
-        bbLower: sma20 - bbStd * std,
-        sma100,
-      };
-    });
-  }, [bars15m]);
+        })
+      ),
+    [bars15m]
+  );
 
-  const chartData1d = useMemo(() => {
-    const smaWindow = 20;
-    const bbStd = 2;
-
-    return bars1d.map((bar, idx) => {
-      const slice = bars1d.slice(Math.max(0, idx - smaWindow + 1), idx + 1);
-      const closes = slice.map((b) => b.close);
-      const sma20 = closes.reduce((a, b) => a + b, 0) / closes.length;
-      const std = Math.sqrt(
-        closes.reduce((acc, c) => acc + Math.pow(c - sma20, 2), 0) / closes.length
-      );
-
-      const sma100Slice = bars1d.slice(Math.max(0, idx - 99), idx + 1);
-      const sma100 =
-        sma100Slice.reduce((a, b) => a + b.close, 0) / sma100Slice.length;
-
-      return {
-        time: new Date(bar.timestamp).toLocaleDateString('pt-BR', {
+  const chartData1d = useMemo(
+    () =>
+      buildChartData(bars1d, (ts) =>
+        new Date(ts).toLocaleDateString('pt-BR', {
           day: '2-digit',
           month: '2-digit',
-        }),
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-        sma20,
-        bbUpper: sma20 + bbStd * std,
-        bbLower: sma20 - bbStd * std,
-        sma100,
-      };
-    });
-  }, [bars1d]);
+        })
+      ),
+    [bars1d]
+  );
 
-  // RSI calculation helper
-  const calculateRSI = (data: typeof bars15m, period = 14) => {
-    const rsiData: { time: string; rsi: number }[] = [];
-
+  // RSI(14)
+  const calculateRSI = (data: Bar[], period = 14) => {
+    const out: { time: string; rsi: number }[] = [];
     for (let i = period; i < data.length; i++) {
-      let gains = 0;
-      let losses = 0;
-
+      let gains = 0,
+        losses = 0;
       for (let j = i - period + 1; j <= i; j++) {
-        const change = data[j].close - data[j - 1].close;
-        if (change > 0) gains += change;
-        else losses -= change;
+        const ch = data[j].close - data[j - 1].close;
+        if (ch > 0) gains += ch;
+        else losses -= ch;
       }
-
-      const avgGain = gains / period;
-      const avgLoss = losses / period;
-      const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-      const rsi = 100 - 100 / (1 + rs);
-
-      rsiData.push({
+      const avg = losses === 0 ? 100 : 100 - 100 / (1 + gains / losses);
+      out.push({
         time: new Date(data[i].timestamp).toLocaleTimeString('pt-BR', {
           hour: '2-digit',
           minute: '2-digit',
         }),
-        rsi,
+        rsi: avg,
       });
     }
-
-    return rsiData;
+    return out;
   };
 
-  const rsiData15m = useMemo(() => calculateRSI(bars15m), [bars15m]);
-  const rsiData1d = useMemo(
-    () =>
-      bars1d.slice(14).map((bar, idx) => ({
-        time: new Date(bar.timestamp).toLocaleDateString('pt-BR', {
+  const calculateRSI1d = (data: Bar[], period = 14) => {
+    const out: { time: string; rsi: number }[] = [];
+    for (let i = period; i < data.length; i++) {
+      let gains = 0,
+        losses = 0;
+      for (let j = i - period + 1; j <= i; j++) {
+        const ch = data[j].close - data[j - 1].close;
+        if (ch > 0) gains += ch;
+        else losses -= ch;
+      }
+      const avg = losses === 0 ? 100 : 100 - 100 / (1 + gains / losses);
+      out.push({
+        time: new Date(data[i].timestamp).toLocaleDateString('pt-BR', {
           day: '2-digit',
           month: '2-digit',
         }),
-        rsi: calculateRSI(bars1d, 14)[idx]?.rsi || 50,
-      })),
-    [bars1d]
-  );
+        rsi: avg,
+      });
+    }
+    return out;
+  };
+
+  const rsiData15m = useMemo(() => calculateRSI(bars15m), [bars15m]);
+  const rsiData1d = useMemo(() => calculateRSI1d(bars1d), [bars1d]);
 
   if (!asset) {
     return (
@@ -205,51 +199,39 @@ const AssetDetail = () => {
     );
   }
 
-  // Generate signal rationale
   const generateRationale = () => {
     const reasons: string[] = [];
-
-    if (asset.is_squeeze) {
+    if (asset.is_squeeze)
       reasons.push(
         `Detectado squeeze nas Bandas de Bollinger (BB Width: ${asset.bb_width_15m?.toFixed(4)})`
       );
-    }
-
-    if (asset.price_vs_sma100_15m === 'above') {
+    if (asset.price_vs_sma100_15m === 'above')
       reasons.push('Preço acima da SMA100 no timeframe de 15 minutos');
-    } else if (asset.price_vs_sma100_15m === 'below') {
+    else if (asset.price_vs_sma100_15m === 'below')
       reasons.push('Preço abaixo da SMA100 no timeframe de 15 minutos');
-    }
-
-    if (asset.price_vs_sma100_1d === 'above') {
+    if (asset.price_vs_sma100_1d === 'above')
       reasons.push('Tendência de alta no diário (acima da SMA100)');
-    } else if (asset.price_vs_sma100_1d === 'below') {
+    else if (asset.price_vs_sma100_1d === 'below')
       reasons.push('Tendência de baixa no diário (abaixo da SMA100)');
-    }
-
-    if ((asset.rsi_15m ?? 50) > 70) {
-      reasons.push(`RSI em zona de sobrecompra (${asset.rsi_15m?.toFixed(1)})`);
-    } else if ((asset.rsi_15m ?? 50) < 30) {
-      reasons.push(`RSI em zona de sobrevenda (${asset.rsi_15m?.toFixed(1)})`);
-    } else if ((asset.rsi_15m ?? 50) > 50) {
-      reasons.push(`RSI indicando momentum positivo (${asset.rsi_15m?.toFixed(1)})`);
-    } else {
-      reasons.push(`RSI indicando momentum negativo (${asset.rsi_15m?.toFixed(1)})`);
-    }
-
+    const rsi = asset.rsi_15m ?? 50;
+    if (rsi > 70)
+      reasons.push(`RSI em zona de sobrecompra (${rsi.toFixed(1)})`);
+    else if (rsi < 30)
+      reasons.push(`RSI em zona de sobrevenda (${rsi.toFixed(1)})`);
+    else if (rsi > 50)
+      reasons.push(`RSI indicando momentum positivo (${rsi.toFixed(1)})`);
+    else
+      reasons.push(`RSI indicando momentum negativo (${rsi.toFixed(1)})`);
     return reasons;
   };
 
-  const PriceChart = ({
-    data,
-    timeframe,
-  }: {
-    data: typeof chartData15m;
-    timeframe: string;
-  }) => (
+  const PriceChart = ({ data }: { data: typeof chartData15m }) => (
     <div className="h-[400px]">
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data.slice(-50)} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+        <ComposedChart
+          data={data.slice(-80)}
+          margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+        >
           <XAxis
             dataKey="time"
             axisLine={false}
@@ -261,7 +243,7 @@ const AssetDetail = () => {
             axisLine={false}
             tickLine={false}
             tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-            tickFormatter={(v) => `R$${v.toFixed(0)}`}
+            tickFormatter={(v) => `R$${Number(v).toFixed(0)}`}
           />
           <Tooltip
             contentStyle={{
@@ -270,15 +252,19 @@ const AssetDetail = () => {
               borderRadius: '8px',
             }}
             labelStyle={{ color: 'hsl(var(--foreground))' }}
+            formatter={(value: number, name: string) => [
+              `R$ ${value.toFixed(2)}`,
+              name,
+            ]}
           />
-          {/* Bollinger Bands Area */}
           <Area
             dataKey="bbUpper"
             stroke="hsl(var(--chart-bb))"
             strokeWidth={1}
             fill="hsl(var(--chart-bb))"
-            fillOpacity={0.1}
+            fillOpacity={0.08}
             dot={false}
+            legendType="none"
           />
           <Area
             dataKey="bbLower"
@@ -287,23 +273,22 @@ const AssetDetail = () => {
             fill="hsl(var(--background))"
             fillOpacity={1}
             dot={false}
+            legendType="none"
           />
-          {/* SMA20 (BB Middle) */}
           <Line
             dataKey="sma20"
             stroke="hsl(var(--chart-bb))"
             strokeWidth={1}
             dot={false}
             strokeDasharray="3 3"
+            legendType="none"
           />
-          {/* SMA100 */}
           <Line
             dataKey="sma100"
             stroke="hsl(var(--chart-sma))"
             strokeWidth={2}
             dot={false}
           />
-          {/* Candlesticks approximation using bars */}
           <RechartsBar
             dataKey="close"
             fill="hsl(var(--chart-candle-up))"
@@ -314,14 +299,13 @@ const AssetDetail = () => {
     </div>
   );
 
-  const RSIChart = ({
-    data,
-  }: {
-    data: { time: string; rsi: number }[];
-  }) => (
+  const RSIChart = ({ data }: { data: { time: string; rsi: number }[] }) => (
     <div className="h-[150px]">
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data.slice(-50)} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+        <ComposedChart
+          data={data.slice(-80)}
+          margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+        >
           <XAxis
             dataKey="time"
             axisLine={false}
@@ -341,10 +325,23 @@ const AssetDetail = () => {
               border: '1px solid hsl(var(--border))',
               borderRadius: '8px',
             }}
+            formatter={(v: number) => [v.toFixed(1), 'RSI']}
           />
-          <ReferenceLine y={70} stroke="hsl(var(--signal-sell))" strokeDasharray="3 3" />
-          <ReferenceLine y={30} stroke="hsl(var(--signal-buy))" strokeDasharray="3 3" />
-          <ReferenceLine y={50} stroke="hsl(var(--muted-foreground))" strokeDasharray="2 2" />
+          <ReferenceLine
+            y={70}
+            stroke="hsl(var(--signal-sell))"
+            strokeDasharray="3 3"
+          />
+          <ReferenceLine
+            y={30}
+            stroke="hsl(var(--signal-buy))"
+            strokeDasharray="3 3"
+          />
+          <ReferenceLine
+            y={50}
+            stroke="hsl(var(--muted-foreground))"
+            strokeDasharray="2 2"
+          />
           <Area
             dataKey="rsi"
             stroke="hsl(var(--chart-rsi))"
@@ -368,7 +365,8 @@ const AssetDetail = () => {
             {errorMessage}
           </div>
         )}
-        {/* Back button and header */}
+
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" asChild>
@@ -393,7 +391,6 @@ const AssetDetail = () => {
               <p className="text-sm text-muted-foreground">{asset.name}</p>
             </div>
           </div>
-
           <div className="flex items-center gap-4">
             <div className="text-right">
               <p className="text-2xl font-bold font-mono">
@@ -402,7 +399,9 @@ const AssetDetail = () => {
               <p
                 className={cn(
                   'text-sm font-medium flex items-center justify-end gap-1',
-                  asset.price_change_pct >= 0 ? 'text-signal-buy' : 'text-signal-sell'
+                  asset.price_change_pct >= 0
+                    ? 'text-signal-buy'
+                    : 'text-signal-sell'
                 )}
               >
                 {asset.price_change_pct >= 0 ? (
@@ -417,32 +416,26 @@ const AssetDetail = () => {
           </div>
         </div>
 
-        {/* Key metrics */}
+        {/* Metricas */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
           <Card>
             <CardContent className="pt-4">
               <p className="text-xs text-muted-foreground mb-1">Sinal</p>
-              <SignalBadge
-                side={asset.signal_side}
-                confidence={asset.confidence}
-              />
+              <SignalBadge side={asset.signal_side} confidence={asset.confidence} />
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-4">
               <p className="text-xs text-muted-foreground mb-1">Squeeze</p>
               <SqueezeBadge isActive={asset.is_squeeze} />
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-4">
               <p className="text-xs text-muted-foreground mb-1">Confiança</p>
               <ConfidenceMeter value={asset.confidence} />
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-4">
               <p className="text-xs text-muted-foreground mb-1">RSI 15m</p>
@@ -457,7 +450,6 @@ const AssetDetail = () => {
               </p>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-4">
               <p className="text-xs text-muted-foreground mb-1">SMA100 15m</p>
@@ -483,7 +475,6 @@ const AssetDetail = () => {
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-4">
               <p className="text-xs text-muted-foreground mb-1">BB Width</p>
@@ -494,67 +485,95 @@ const AssetDetail = () => {
           </Card>
         </div>
 
-        {/* Charts */}
-        <Tabs defaultValue="15m" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="15m" className="flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              15 Minutos
-            </TabsTrigger>
-            <TabsTrigger value="1d" className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4" />
-              Diário
-            </TabsTrigger>
-          </TabsList>
+        {/* Graficos */}
+        {isLoading ? (
+          <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+            Carregando gráficos...
+          </div>
+        ) : (
+          <Tabs defaultValue="15m" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="15m" className="flex items-center gap-2">
+                <Clock className="h-4 w-4" />
+                15 Minutos
+              </TabsTrigger>
+              <TabsTrigger value="1d" className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Diário
+              </TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="15m" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-primary" />
-                  Preço com Bollinger Bands (20, 2) e SMA100
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <PriceChart data={chartData15m} timeframe="15m" />
-              </CardContent>
-            </Card>
+            <TabsContent value="15m" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-primary" />
+                    Preço com Bollinger Bands (20, 2) e SMA100
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {chartData15m.length > 0 ? (
+                    <PriceChart data={chartData15m} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      Sem dados disponíveis para este período.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">RSI (14)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {rsiData15m.length > 0 ? (
+                    <RSIChart data={rsiData15m} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      Dados insuficientes para RSI.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">RSI (14)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <RSIChart data={rsiData15m} />
-              </CardContent>
-            </Card>
-          </TabsContent>
+            <TabsContent value="1d" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-primary" />
+                    Preço com Bollinger Bands (20, 2) e SMA100
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {chartData1d.length > 0 ? (
+                    <PriceChart data={chartData1d} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      Sem dados disponíveis para este período.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">RSI (14)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {rsiData1d.length > 0 ? (
+                    <RSIChart data={rsiData1d} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      Dados insuficientes para RSI.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        )}
 
-          <TabsContent value="1d" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-primary" />
-                  Preço com Bollinger Bands (20, 2) e SMA100
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <PriceChart data={chartData1d} timeframe="1d" />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">RSI (14)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <RSIChart data={rsiData1d} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-
-        {/* Signal Rationale */}
+        {/* Analise do Sinal */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm flex items-center gap-2">
@@ -577,7 +596,6 @@ const AssetDetail = () => {
                     : 'Sem sinal claro no momento'}
                 </span>
               </div>
-
               <div className="border-t border-border pt-4">
                 <h4 className="text-sm font-medium mb-2">Racional:</h4>
                 <ul className="space-y-2">
