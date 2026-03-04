@@ -1,4 +1,4 @@
-import { DashboardFilters, AssetType, SignalSide } from '@/types/market';
+import { DashboardFilters, AssetType, SignalSide, SignalType } from '@/types/market';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -16,7 +16,10 @@ interface DashboardFiltersBarProps {
   onFiltersChange: (filters: DashboardFilters) => void;
 }
 
-export function DashboardFiltersBar({ filters, onFiltersChange }: DashboardFiltersBarProps) {
+export function DashboardFiltersBar({
+  filters,
+  onFiltersChange,
+}: DashboardFiltersBarProps) {
   const updateFilter = <K extends keyof DashboardFilters>(
     key: K,
     value: DashboardFilters[K]
@@ -29,6 +32,7 @@ export function DashboardFiltersBar({ filters, onFiltersChange }: DashboardFilte
       assetType: 'all',
       squeezeOnly: false,
       signalSide: 'all',
+      signalType: 'all',
       rsiFilter: 'all',
       smaProximity: null,
     });
@@ -38,6 +42,7 @@ export function DashboardFiltersBar({ filters, onFiltersChange }: DashboardFilte
     filters.assetType !== 'all' ||
     filters.squeezeOnly ||
     filters.signalSide !== 'all' ||
+    filters.signalType !== 'all' ||
     filters.rsiFilter !== 'all' ||
     filters.smaProximity !== null;
 
@@ -49,30 +54,34 @@ export function DashboardFiltersBar({ filters, onFiltersChange }: DashboardFilte
       </div>
 
       <div className="flex flex-wrap items-center gap-4">
-        {/* Asset Type */}
+        {/* Tipo de ativo */}
         <div className="flex items-center gap-2">
           <Label className="text-xs text-muted-foreground">Tipo</Label>
           <Select
             value={filters.assetType}
-            onValueChange={(v) => updateFilter('assetType', v as AssetType | 'all')}
+            onValueChange={(v) =>
+              updateFilter('assetType', v as AssetType | 'all')
+            }
           >
             <SelectTrigger className="w-[120px] h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos</SelectItem>
-              <SelectItem value="stock">Ações</SelectItem>
+              <SelectItem value="stock">Acoes</SelectItem>
               <SelectItem value="etf">ETFs</SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        {/* Signal Side */}
+        {/* Direcao do sinal */}
         <div className="flex items-center gap-2">
           <Label className="text-xs text-muted-foreground">Sinal</Label>
           <Select
             value={filters.signalSide}
-            onValueChange={(v) => updateFilter('signalSide', v as SignalSide | 'all')}
+            onValueChange={(v) =>
+              updateFilter('signalSide', v as SignalSide | 'all')
+            }
           >
             <SelectTrigger className="w-[120px] h-8 text-xs">
               <SelectValue />
@@ -86,29 +95,57 @@ export function DashboardFiltersBar({ filters, onFiltersChange }: DashboardFilte
           </Select>
         </div>
 
-        {/* RSI Filter */}
+        {/* Tipo de setup */}
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Setup</Label>
+          <Select
+            value={filters.signalType ?? 'all'}
+            onValueChange={(v) =>
+              updateFilter(
+                'signalType',
+                v === 'all' ? 'all' : (v as SignalType)
+              )
+            }
+          >
+            <SelectTrigger className="w-[160px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os setups</SelectItem>
+              <SelectItem value="bb_bounce">Bounce Banda Inf.</SelectItem>
+              <SelectItem value="bb_rejection">Rejeicao Banda Sup.</SelectItem>
+              <SelectItem value="bb_breakout">Rompimento Altista</SelectItem>
+              <SelectItem value="bb_breakdown">Rompimento Baixista</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* RSI */}
         <div className="flex items-center gap-2">
           <Label className="text-xs text-muted-foreground">RSI</Label>
           <Select
             value={filters.rsiFilter}
             onValueChange={(v) =>
-              updateFilter('rsiFilter', v as 'all' | 'overbought' | 'oversold')
+              updateFilter(
+                'rsiFilter',
+                v as 'all' | 'overbought' | 'oversold'
+              )
             }
           >
-            <SelectTrigger className="w-[140px] h-8 text-xs">
+            <SelectTrigger className="w-[150px] h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos</SelectItem>
-              <SelectItem value="overbought">Sobrecomprado</SelectItem>
-              <SelectItem value="oversold">Sobrevendido</SelectItem>
+              <SelectItem value="oversold">Sobrevendido (&lt;45)</SelectItem>
+              <SelectItem value="overbought">Sobrecomprado (&gt;60)</SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        {/* SMA Proximity */}
+        {/* Proximidade SMA50 */}
         <div className="flex items-center gap-2">
-          <Label className="text-xs text-muted-foreground">Prox. SMA</Label>
+          <Label className="text-xs text-muted-foreground">Prox. SMA50</Label>
           <Select
             value={filters.smaProximity?.toString() ?? 'all'}
             onValueChange={(v) =>
@@ -120,14 +157,14 @@ export function DashboardFiltersBar({ filters, onFiltersChange }: DashboardFilte
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos</SelectItem>
-              <SelectItem value="1">≤ 1%</SelectItem>
               <SelectItem value="2">≤ 2%</SelectItem>
               <SelectItem value="5">≤ 5%</SelectItem>
+              <SelectItem value="10">≤ 10%</SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        {/* Squeeze Only */}
+        {/* Squeeze BB ativo */}
         <div className="flex items-center gap-2">
           <Switch
             id="squeeze-only"
@@ -135,11 +172,10 @@ export function DashboardFiltersBar({ filters, onFiltersChange }: DashboardFilte
             onCheckedChange={(checked) => updateFilter('squeezeOnly', checked)}
           />
           <Label htmlFor="squeeze-only" className="text-xs cursor-pointer">
-            Apenas Squeeze
+            Squeeze BB ativo
           </Label>
         </div>
 
-        {/* Reset Filters */}
         {hasActiveFilters && (
           <Button
             variant="ghost"

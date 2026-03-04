@@ -1,5 +1,5 @@
 import { AssetWithSignal } from '@/types/market';
-import { TrendingUp, TrendingDown, Zap, Activity } from 'lucide-react';
+import { TrendingUp, TrendingDown, Zap, BarChart3 } from 'lucide-react';
 
 interface DashboardStatsProps {
   assets: AssetWithSignal[];
@@ -8,15 +8,16 @@ interface DashboardStatsProps {
 export function DashboardStats({ assets }: DashboardStatsProps) {
   const buySignals = assets.filter((a) => a.signal_side === 'buy').length;
   const sellSignals = assets.filter((a) => a.signal_side === 'sell').length;
-  const squeezeCount = assets.filter((a) => a.is_squeeze).length;
-  const avgConfidence =
-    assets.length > 0
-      ? Math.round(assets.reduce((acc, a) => acc + a.confidence, 0) / assets.length)
-      : 0;
+
+  // Contagem por tipo de setup de swing trade
+  const bounceCount = assets.filter((a) => a.signal_type === 'bb_bounce').length;
+  const breakoutCount = assets.filter(
+    (a) => a.signal_type === 'bb_breakout' || a.signal_type === 'bb_breakdown'
+  ).length;
 
   const stats = [
     {
-      label: 'Sinais de Compra',
+      label: 'Compra (Bounce/Breakout)',
       value: buySignals,
       icon: TrendingUp,
       color: 'text-signal-buy',
@@ -24,7 +25,7 @@ export function DashboardStats({ assets }: DashboardStatsProps) {
       borderColor: 'border-signal-buy/20',
     },
     {
-      label: 'Sinais de Venda',
+      label: 'Venda / Cautela',
       value: sellSignals,
       icon: TrendingDown,
       color: 'text-signal-sell',
@@ -32,17 +33,17 @@ export function DashboardStats({ assets }: DashboardStatsProps) {
       borderColor: 'border-signal-sell/20',
     },
     {
-      label: 'Em Squeeze',
-      value: squeezeCount,
+      label: 'Bounce na Banda',
+      value: bounceCount,
       icon: Zap,
       color: 'text-squeeze',
       bgColor: 'bg-squeeze/10',
       borderColor: 'border-squeeze/20',
     },
     {
-      label: 'Confiança Média',
-      value: `${avgConfidence}%`,
-      icon: Activity,
+      label: 'Rompimento BB',
+      value: breakoutCount,
+      icon: BarChart3,
       color: 'text-primary',
       bgColor: 'bg-primary/10',
       borderColor: 'border-primary/20',

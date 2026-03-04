@@ -64,29 +64,28 @@ export interface Signal {
 }
 
 /**
- * Swing Trade fields:
- *  bb_width_1d / bb_upper_1d / bb_lower_1d / bb_middle_1d -> BB(20,2) diario
- *  price_vs_sma50 -> preco vs SMA50 diaria (tendencia de curto/medio prazo)
- *  price_vs_sma200 -> preco vs SMA200 diaria (tendencia macro)
- *  distance_to_sma50 -> distancia percentual ao SMA50
- *  rsi_1d -> RSI(14) diario
- *  rsi_1wk -> RSI(14) semanal (confirmacao de tendencia)
- *  signal_type -> tipo de setup detectado
+ * Swing Trade — todos os campos sao baseados em dados diarios (1d) e semanais (1wk).
+ * Nenhum campo intraday existe neste modelo.
  */
 export interface AssetWithSignal extends Asset {
   last_price: number;
   price_change_pct: number;
   volume: number;
+  // Bollinger Bands (20,2) diario
   bb_width_1d: number | null;
   bb_upper_1d: number | null;
   bb_lower_1d: number | null;
   bb_middle_1d: number | null;
+  // Squeeze: BB width abaixo do limiar configurado
   is_squeeze: boolean;
+  // Tendencia via SMAs
   price_vs_sma50: 'above' | 'below' | null;
   price_vs_sma200: 'above' | 'below' | null;
   distance_to_sma50: number | null;
+  // RSI
   rsi_1d: number | null;
   rsi_1wk: number | null;
+  // Sinal
   signal_side: SignalSide;
   signal_type: SignalType;
   confidence: number;
@@ -106,6 +105,7 @@ export interface DashboardFilters {
   assetType: AssetType | 'all';
   squeezeOnly: boolean;
   signalSide: SignalSide | 'all';
+  signalType: SignalType | 'all';
   rsiFilter: 'all' | 'overbought' | 'oversold';
   smaProximity: number | null;
 }

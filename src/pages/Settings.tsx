@@ -1,20 +1,17 @@
 import { useEffect, useState } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
-import { Switch } from '@/components/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { Settings as SettingsIcon, Save, RotateCcw } from 'lucide-react';
+import { Settings as SettingsIcon, Save, RotateCcw, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   DEFAULT_SETTINGS,
@@ -26,42 +23,38 @@ import {
 
 const Settings = () => {
   const [settings, setSettings] = useState<SettingsState>(DEFAULT_SETTINGS);
-
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
     setSettings(getSettings());
   }, []);
 
-  const updateSetting = <K extends keyof SettingsState>(
-    key: K,
-    value: SettingsState[K]
-  ) => {
+  const update = <K extends keyof SettingsState>(key: K, value: SettingsState[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
     setHasChanges(true);
   };
 
-  const updateWeight = (key: keyof typeof settings.confidenceWeights, value: number) => {
+  const updateWeight = (
+    key: keyof typeof settings.confidenceWeights,
+    value: number
+  ) => {
     setSettings((prev) => ({
       ...prev,
-      confidenceWeights: {
-        ...prev.confidenceWeights,
-        [key]: value,
-      },
+      confidenceWeights: { ...prev.confidenceWeights, [key]: value },
     }));
     setHasChanges(true);
   };
 
   const handleSave = () => {
     saveSettings(settings);
-    toast.success('Configurações salvas com sucesso!');
+    toast.success('Configuracoes salvas!');
     setHasChanges(false);
   };
 
   const handleReset = () => {
     setSettings(resetSettings());
     setHasChanges(true);
-    toast.info('Configurações restauradas para valores padrão');
+    toast.info('Configuracoes restauradas para padrao');
   };
 
   const totalWeight = Object.values(settings.confidenceWeights).reduce(
@@ -72,17 +65,17 @@ const Settings = () => {
   return (
     <MainLayout>
       <div className="space-y-6 animate-slide-up max-w-4xl mx-auto">
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
               <SettingsIcon className="h-6 w-6 text-primary" />
-              Configurações
+              Configuracoes
             </h1>
             <p className="text-sm text-muted-foreground">
-              Ajuste os parâmetros dos indicadores técnicos e do sistema
+              Parametros dos indicadores tecnicos para Swing Trade
             </p>
           </div>
-
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={handleReset}>
               <RotateCcw className="h-4 w-4 mr-2" />
@@ -95,140 +88,191 @@ const Settings = () => {
           </div>
         </div>
 
-        {/* Indicator Settings */}
+        {/* Info Banner */}
+        <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm text-muted-foreground">
+          <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+          <p>
+            Todos os sinais sao calculados sobre dados <strong>diarios e semanais</strong> do
+            Yahoo Finance. Nenhuma analise intraday (15m, 5m) e realizada — o foco e
+            exclusivamente em <strong>swing trade</strong> com horizonte de dias a semanas.
+          </p>
+        </div>
+
+        {/* Bollinger Bands */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Parâmetros dos Indicadores</CardTitle>
+            <CardTitle className="text-lg">Bandas de Bollinger</CardTitle>
             <CardDescription>
-              Configure os períodos e parâmetros dos indicadores técnicos
+              Parametros das BB usadas para detectar squeeze, bounce e rompimentos
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Bollinger Bands Period */}
               <div className="space-y-2">
-                <Label htmlFor="bbPeriod">Período Bollinger Bands</Label>
+                <Label htmlFor="bbPeriod">Periodo BB</Label>
                 <Input
                   id="bbPeriod"
                   type="number"
                   value={settings.bbPeriod}
-                  onChange={(e) => updateSetting('bbPeriod', parseInt(e.target.value) || 20)}
+                  onChange={(e) => update('bbPeriod', parseInt(e.target.value) || 20)}
                   min={5}
                   max={50}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Número de períodos para calcular a média móvel central (padrão: 20)
+                  Media movel central das bandas. Padrao: 20
                 </p>
               </div>
 
-              {/* Bollinger Bands Std */}
               <div className="space-y-2">
-                <Label htmlFor="bbStd">Desvio Padrão BB</Label>
+                <Label htmlFor="bbStd">Desvio Padrao BB</Label>
                 <Input
                   id="bbStd"
                   type="number"
                   step="0.5"
                   value={settings.bbStd}
-                  onChange={(e) => updateSetting('bbStd', parseFloat(e.target.value) || 2)}
+                  onChange={(e) => update('bbStd', parseFloat(e.target.value) || 2)}
                   min={1}
                   max={4}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Multiplicador do desvio padrão para as bandas (padrão: 2)
+                  Multiplicador do desvio padrao. Padrao: 2
                 </p>
               </div>
 
-              {/* RSI Period */}
               <div className="space-y-2">
-                <Label htmlFor="rsiPeriod">Período RSI</Label>
-                <Input
-                  id="rsiPeriod"
-                  type="number"
-                  value={settings.rsiPeriod}
-                  onChange={(e) => updateSetting('rsiPeriod', parseInt(e.target.value) || 14)}
-                  min={5}
-                  max={30}
+                <Label htmlFor="squeezeThreshold">
+                  Limiar de Squeeze: {settings.squeezeThreshold.toFixed(2)}
+                </Label>
+                <Slider
+                  id="squeezeThreshold"
+                  value={[settings.squeezeThreshold]}
+                  onValueChange={([v]) => update('squeezeThreshold', v)}
+                  min={0.02}
+                  max={0.20}
+                  step={0.01}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Número de períodos para calcular o RSI (padrão: 14)
-                </p>
-              </div>
-
-              {/* SMA Period */}
-              <div className="space-y-2">
-                <Label htmlFor="smaPeriod">Período SMA</Label>
-                <Input
-                  id="smaPeriod"
-                  type="number"
-                  value={settings.smaPeriod}
-                  onChange={(e) => updateSetting('smaPeriod', parseInt(e.target.value) || 100)}
-                  min={20}
-                  max={200}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Número de períodos para a média móvel simples (padrão: 100)
+                  BB Width abaixo deste valor indica compressao (squeeze).
+                  Squeeze antecede rompimentos. Padrao: 0.07
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Squeeze Detection */}
+        {/* Medias Moveis */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Detecção de Squeeze</CardTitle>
+            <CardTitle className="text-lg">Medias Moveis (SMAs)</CardTitle>
             <CardDescription>
-              Configure os parâmetros para identificar compressão nas Bandas de Bollinger
+              SMA50 filtra tendencia de medio prazo; SMA200 filtra tendencia macro (golden/death cross)
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
-                <Label htmlFor="squeezeThreshold">
-                  Limiar de BB Width: {settings.squeezeThreshold.toFixed(2)}
-                </Label>
-                <Slider
-                  id="squeezeThreshold"
-                  value={[settings.squeezeThreshold]}
-                  onValueChange={([v]) => updateSetting('squeezeThreshold', v)}
-                  min={0.01}
-                  max={0.15}
-                  step={0.01}
+                <Label htmlFor="smaPeriod">SMA Rapida</Label>
+                <Input
+                  id="smaPeriod"
+                  type="number"
+                  value={settings.smaPeriod}
+                  onChange={(e) => update('smaPeriod', parseInt(e.target.value) || 50)}
+                  min={10}
+                  max={100}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Considera squeeze quando BB Width estiver abaixo deste valor
+                  Usada como filtro de tendencia de medio prazo. Padrao: 50
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="squeezePercentile">
-                  Percentil de Squeeze: {settings.squeezePercentile}%
-                </Label>
-                <Slider
-                  id="squeezePercentile"
-                  value={[settings.squeezePercentile]}
-                  onValueChange={([v]) => updateSetting('squeezePercentile', v)}
-                  min={5}
-                  max={25}
-                  step={1}
+                <Label htmlFor="sma200Period">SMA Lenta</Label>
+                <Input
+                  id="sma200Period"
+                  type="number"
+                  value={settings.sma200Period}
+                  onChange={(e) => update('sma200Period', parseInt(e.target.value) || 200)}
+                  min={100}
+                  max={250}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Ou quando estiver no percentil mais baixo dos últimos 20 dias
+                  Tendencia macro. Golden cross (SMA50 &gt; SMA200) favorece compras.
+                  Padrao: 200
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Confidence Weights */}
+        {/* RSI */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Pesos de Confiança</CardTitle>
+            <CardTitle className="text-lg">RSI</CardTitle>
             <CardDescription>
-              Configure a importância de cada critério no cálculo do score de confiança
+              Limiares de RSI para confirmacao dos setups de swing trade
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="rsiPeriod">Periodo RSI</Label>
+                <Input
+                  id="rsiPeriod"
+                  type="number"
+                  value={settings.rsiPeriod}
+                  onChange={(e) => update('rsiPeriod', parseInt(e.target.value) || 14)}
+                  min={5}
+                  max={30}
+                />
+                <p className="text-xs text-muted-foreground">Padrao: 14</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="rsiOversold">
+                  Sobrevenda (Bounce Buy): {settings.rsiOversold}
+                </Label>
+                <Slider
+                  id="rsiOversold"
+                  value={[settings.rsiOversold]}
+                  onValueChange={([v]) => update('rsiOversold', v)}
+                  min={25}
+                  max={50}
+                  step={1}
+                />
+                <p className="text-xs text-muted-foreground">
+                  RSI abaixo deste valor ativa BB Bounce Buy. Padrao: 45
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="rsiOverbought">
+                  Sobrecompra (Rejection Sell): {settings.rsiOverbought}
+                </Label>
+                <Slider
+                  id="rsiOverbought"
+                  value={[settings.rsiOverbought]}
+                  onValueChange={([v]) => update('rsiOverbought', v)}
+                  min={50}
+                  max={80}
+                  step={1}
+                />
+                <p className="text-xs text-muted-foreground">
+                  RSI acima deste valor ativa BB Rejection Sell. Padrao: 60
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Pontuacao de Confianca */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Pontuacao de Confianca</CardTitle>
+            <CardDescription>
+              Peso de cada pilar no score de confianca (0-100).
               {totalWeight !== 100 && (
                 <span className="text-destructive ml-2">
-                  (Total: {totalWeight}% - deve somar 100%)
+                  Total: {totalWeight} pts (deve somar 100)
                 </span>
               )}
             </CardDescription>
@@ -236,18 +280,57 @@ const Settings = () => {
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
-                <Label>Squeeze Detectado: {settings.confidenceWeights.squeeze}%</Label>
+                <Label>
+                  Toque na Banda: {settings.confidenceWeights.bandTouch} pts
+                </Label>
                 <Slider
-                  value={[settings.confidenceWeights.squeeze]}
-                  onValueChange={([v]) => updateWeight('squeeze', v)}
+                  value={[settings.confidenceWeights.bandTouch]}
+                  onValueChange={([v]) => updateWeight('bandTouch', v)}
                   min={0}
                   max={50}
                   step={5}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Qualidade do toque na banda superior ou inferior
+                </p>
               </div>
 
               <div className="space-y-2">
-                <Label>Cruzamento SMA100: {settings.confidenceWeights.smaCross}%</Label>
+                <Label>
+                  Confluencia RSI: {settings.confidenceWeights.rsiConfluence} pts
+                </Label>
+                <Slider
+                  value={[settings.confidenceWeights.rsiConfluence]}
+                  onValueChange={([v]) => updateWeight('rsiConfluence', v)}
+                  min={0}
+                  max={50}
+                  step={5}
+                />
+                <p className="text-xs text-muted-foreground">
+                  O quanto o RSI confirma o sinal da BB
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Alinhamento de Tendencia: {settings.confidenceWeights.trendAlignment} pts
+                </Label>
+                <Slider
+                  value={[settings.confidenceWeights.trendAlignment]}
+                  onValueChange={([v]) => updateWeight('trendAlignment', v)}
+                  min={0}
+                  max={50}
+                  step={5}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Preco alinhado com a SMA50 na direcao do sinal
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Golden/Death Cross: {settings.confidenceWeights.smaCross} pts
+                </Label>
                 <Slider
                   value={[settings.confidenceWeights.smaCross]}
                   onValueChange={([v]) => updateWeight('smaCross', v)}
@@ -255,95 +338,39 @@ const Settings = () => {
                   max={50}
                   step={5}
                 />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Condição RSI: {settings.confidenceWeights.rsi}%</Label>
-                <Slider
-                  value={[settings.confidenceWeights.rsi]}
-                  onValueChange={([v]) => updateWeight('rsi', v)}
-                  min={0}
-                  max={50}
-                  step={5}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Expansão BB: {settings.confidenceWeights.bbExpansion}%</Label>
-                <Slider
-                  value={[settings.confidenceWeights.bbExpansion]}
-                  onValueChange={([v]) => updateWeight('bbExpansion', v)}
-                  min={0}
-                  max={50}
-                  step={5}
-                />
+                <p className="text-xs text-muted-foreground">
+                  SMA50 vs SMA200 alinhado com o sinal (golden cross para compra)
+                </p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* System Settings */}
+        {/* Sistema */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Configurações do Sistema</CardTitle>
+            <CardTitle className="text-lg">Sistema</CardTitle>
             <CardDescription>
-              Configure a frequência de atualização e o provedor de dados
+              Frequencia de atualizacao dos dados
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label htmlFor="brapiToken">Token BRAPI</Label>
-                <Input
-                  id="brapiToken"
-                  type="password"
-                  value={settings.brapiToken}
-                  onChange={(e) => updateSetting('brapiToken', e.target.value)}
-                  placeholder="Informe o token da BRAPI"
-                  autoComplete="off"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Usado para autenticar as requisições à BRAPI (salvo localmente no navegador).
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="updateInterval">
-                  Intervalo de Atualização: {settings.updateInterval} min
-                </Label>
-                <Slider
-                  id="updateInterval"
-                  value={[settings.updateInterval]}
-                  onValueChange={([v]) => updateSetting('updateInterval', v)}
-                  min={1}
-                  max={30}
-                  step={1}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Frequência de atualização dos dados em minutos
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="dataProvider">Provedor de Dados</Label>
-                <Select
-                  value={settings.dataProvider}
-                  onValueChange={(v) => updateSetting('dataProvider', v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="brapi">BRAPI (Recomendado)</SelectItem>
-                    <SelectItem value="simulado">Simulado (Local)</SelectItem>
-                    <SelectItem value="manual">Manual / CSV</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Selecione o provedor de dados de mercado. Para BRAPI, configure
-                  o token nas configurações ou em VITE_BRAPI_TOKEN.
-                </p>
-              </div>
+          <CardContent>
+            <div className="max-w-sm space-y-2">
+              <Label htmlFor="updateInterval">
+                Intervalo de Atualizacao: {settings.updateInterval} min
+              </Label>
+              <Slider
+                id="updateInterval"
+                value={[settings.updateInterval]}
+                onValueChange={([v]) => update('updateInterval', v)}
+                min={5}
+                max={60}
+                step={5}
+              />
+              <p className="text-xs text-muted-foreground">
+                Frequencia com que o dashboard busca novos dados do Yahoo Finance.
+                Para swing trade, 15-30 min e suficiente. Padrao: 30 min
+              </p>
             </div>
           </CardContent>
         </Card>
