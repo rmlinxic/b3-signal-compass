@@ -4,6 +4,11 @@ import {
   fetchBrapiHistoricalBars,
   fetchBrapiQuotes,
 } from '@/lib/brapiClient';
+import {
+  fetchYahooQuote,
+  fetchYahooHistoricalBars,
+  YahooQuote,
+} from '@/lib/yahooFinanceClient';
 
 const STORAGE_KEYS = {
   assets: 'b3.assets',
@@ -37,8 +42,8 @@ export const DEFAULT_SETTINGS: SettingsState = {
   squeezeThreshold: 0.05,
   squeezePercentile: 10,
   updateInterval: 15,
-  dataProvider: 'brapi',
-  brapiToken: 'mgXc96mbqF19ext2pfiWUs',
+  dataProvider: 'yahoo',
+  brapiToken: import.meta.env.VITE_BRAPI_TOKEN ?? '',
   confidenceWeights: {
     squeeze: 25,
     smaCross: 25,
@@ -263,74 +268,96 @@ const simulateDashboardAssets = (): AssetWithSignal[] => {
   return updated;
 };
 
+// Busca cotação: tenta Yahoo Finance primeiro, cai para BRAPI se falhar
+const fetchQuoteWithFallback = async (
+  ticker: string
+): Promise<YahooQuote | null> => {
+  try {
+    return await fetchYahooQuote(ticker);
+  } catch (yahooErr) {
+    console.warn(`[Yahoo] Falha para ${ticker}:`, yahooErr);
+    try {
+      const results = await fetchBrapiQuotes([ticker]);
+      const quote = results[0];
+      if (!quote) return null;
+      return {
+        symbol: quote.symbol,
+        regularMarketPrice: quote.regularMarketPrice,
+        regularMarketChangePercent: quote.regularMarketChangePercent,
+        regularMarketVolume: quote.regularMarketVolume,
+      };
+    } catch (brapiErr) {
+      console.warn(`[BRAPI] Fallback também falhou para ${ticker}:`, brapiErr);
+      return null;
+    }
+  }
+};
+
+// Busca histórico: tenta Yahoo Finance primeiro, cai para BRAPI se falhar
+const fetchBarsWithFallback = async (
+  ticker: string,
+  timeframe: '15m' | '1d'
+): Promise<Bar[]> => {
+  try {
+    return await fetchYahooHistoricalBars(ticker, timeframe);
+  } catch (yahooErr) {
+    console.warn(`[Yahoo] Histórico falhou para ${ticker} (${timeframe}):`, yahooErr);
+    try {
+      return await fetchBrapiHistoricalBars(ticker, timeframe);
+    } catch (brapiErr) {
+      console.warn(`[BRAPI] Histórico fallback falhou para ${ticker} (${timeframe}):`, brapiErr);
+      return [];
+    }
+  }
+};
+
 export const updateDashboardAssets = async (
   provider: SettingsState['dataProvider']
 ): Promise<AssetWithSignal[]> => {
-  if (provider !== 'brapi') {
+  if (provider === 'mock') {
     return simulateDashboardAssets();
   }
 
+  const assets = getAssetsFromStorage();
+  const settings = getSettingsFromStorage();
+  const now = new Date().toISOString();
+
   try {
-    const assets = getAssetsFromStorage();
-    const settings = getSettingsFromStorage();
-    const tickers = assets.map((asset) => asset.ticker);
-    const quotes = await fetchBrapiQuotes(tickers);
-    const now = new Date().toISOString();
-    const normalizeTicker = (ticker: string) =>
-      ticker.includes('.') ? ticker : `${ticker}.SA`;
-    const loadBars = async (ticker: string, timeframe: '15m' | '1d') => {
-      try {
-        return await fetchBrapiHistoricalBars(ticker, timeframe);
-      } catch {
-        return [];
-      }
-    };
-
-    if (quotes.length === 0) {
-      throw new Error('A BRAPI não retornou dados para os ativos solicitados.');
-    }
-
     const updated = await Promise.all(
       assets.map(async (asset) => {
-        const normalizedTicker = normalizeTicker(asset.ticker);
-        const quote = quotes.find(
-          (item) => item.symbol === asset.ticker || item.symbol === normalizedTicker
-        );
-        if (!quote) return asset;
-
-        const [bars15m, bars1d] = await Promise.all([
-          loadBars(asset.ticker, '15m'),
-          loadBars(asset.ticker, '1d'),
+        const [quote, bars15m, bars1d] = await Promise.all([
+          fetchQuoteWithFallback(asset.ticker),
+          fetchBarsWithFallback(asset.ticker, '15m'),
+          fetchBarsWithFallback(asset.ticker, '1d'),
         ]);
 
         const indicators15m = computeIndicators(bars15m, settings);
         const indicators1d = computeIndicators(bars1d, settings);
 
         const lastPrice =
-          quote.regularMarketPrice ??
+          quote?.regularMarketPrice ??
           indicators15m.lastClose ??
           asset.last_price;
+
         const distanceToSma =
           indicators15m.sma100 && lastPrice
             ? ((lastPrice - indicators15m.sma100) / indicators15m.sma100) * 100
             : asset.distance_to_sma100 ?? null;
+
         const isSqueeze =
           indicators15m.bbWidth !== null
             ? indicators15m.bbWidth < settings.squeezeThreshold
             : asset.is_squeeze ?? false;
+
         const rsi15m = indicators15m.rsi ?? asset.rsi_15m ?? 50;
-        const signal = generateSignal(
-          isSqueeze,
-          rsi15m,
-          distanceToSma ?? 0
-        );
+        const signal = generateSignal(isSqueeze, rsi15m, distanceToSma ?? 0);
 
         return {
           ...asset,
           last_price: lastPrice,
           price_change_pct:
-            quote.regularMarketChangePercent ?? asset.price_change_pct,
-          volume: quote.regularMarketVolume ?? asset.volume,
+            quote?.regularMarketChangePercent ?? asset.price_change_pct,
+          volume: quote?.regularMarketVolume ?? asset.volume,
           bb_width_15m: indicators15m.bbWidth ?? asset.bb_width_15m,
           is_squeeze: isSqueeze,
           price_vs_sma100_15m:
@@ -362,7 +389,7 @@ export const updateDashboardAssets = async (
     const message =
       error instanceof Error
         ? error.message
-        : 'Falha de comunicação com a API da BRAPI.';
+        : 'Falha ao buscar dados de mercado.';
     throw new Error(message);
   }
 };
