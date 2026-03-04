@@ -27,11 +27,11 @@ export interface SettingsState {
   bbPeriod: number;
   bbStd: number;
   rsiPeriod: number;
-  smaPeriod: number;    // SMA rapida: 50
-  sma200Period: number; // SMA lenta: 200
+  smaPeriod: number;
+  sma200Period: number;
   squeezeThreshold: number;
-  rsiOversold: number;  // limiar de sobrevenda para swing: 45
-  rsiOverbought: number; // limiar de sobrecompra para swing: 60
+  rsiOversold: number;
+  rsiOverbought: number;
   updateInterval: number;
   dataProvider: string;
   brapiToken: string;
@@ -86,7 +86,9 @@ export const resetSettings = (): SettingsState => {
   return DEFAULT_SETTINGS;
 };
 
-// --- Calculos tecnicos ---
+// ---------------------------------------------------------------------------
+// Calculos tecnicos
+// ---------------------------------------------------------------------------
 
 const calculateSMA = (closes: number[], period: number): number | null => {
   if (closes.length < period) return null;
@@ -100,6 +102,10 @@ interface BBResult {
   width: number;
 }
 
+/**
+ * Bollinger Bands(period, stdMultiplier)
+ * Usa variancia populacional (/ n), identico ao padrao do TradingView.
+ */
 const calculateBB = (
   closes: number[],
   period: number,
@@ -109,7 +115,7 @@ const calculateBB = (
   const slice = closes.slice(-period);
   const middle = slice.reduce((a, b) => a + b, 0) / period;
   const variance =
-    slice.reduce((acc, v) => acc + Math.pow(v - middle, 2), 0) / period;
+    slice.reduce((acc, v) => acc + (v - middle) ** 2, 0) / period;
   const std = Math.sqrt(variance);
   const upper = middle + stdMultiplier * std;
   const lower = middle - stdMultiplier * std;
@@ -121,17 +127,47 @@ const calculateBB = (
   };
 };
 
+/**
+ * RSI de Wilder (identico ao TradingView / MetaTrader).
+ *
+ * Algoritmo:
+ *  1. Calcula todas as variacoes barra a barra.
+ *  2. Seed: media simples dos primeiros `period` movimentos.
+ *  3. Suavizacao de Wilder para os movimentos restantes:
+ *       avgGain = (avgGain * (period - 1) + gain) / period
+ *       avgLoss = (avgLoss * (period - 1) + loss) / period
+ *  4. RSI = 100 - 100 / (1 + avgGain / avgLoss)
+ *
+ * A implementacao anterior usava media simples sobre apenas os ultimos
+ * `period` candles sem acumular historico, gerando valores incorretos.
+ */
 const calculateRSI = (closes: number[], period: number): number | null => {
   if (closes.length < period + 1) return null;
-  let gains = 0,
-    losses = 0;
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const change = closes[i] - closes[i - 1];
-    if (change > 0) gains += change;
-    else losses -= change;
+
+  // Variacao barra a barra
+  const changes: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    changes.push(closes[i] - closes[i - 1]);
   }
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
+
+  // Seed: media simples dos primeiros `period` movimentos
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 0; i < period; i++) {
+    if (changes[i] > 0) avgGain += changes[i];
+    else avgLoss -= changes[i];
+  }
+  avgGain /= period;
+  avgLoss /= period;
+
+  // Suavizacao de Wilder para os movimentos restantes
+  for (let i = period; i < changes.length; i++) {
+    const gain = changes[i] > 0 ? changes[i] : 0;
+    const loss = changes[i] < 0 ? -changes[i] : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
   if (avgLoss === 0) return 100;
   return 100 - 100 / (1 + avgGain / avgLoss);
 };
@@ -140,28 +176,16 @@ const calculateRSI = (closes: number[], period: number): number | null => {
  * Logica de sinais para Swing Trade com Bandas de Bollinger.
  *
  * Setups detectados:
- *  1. bb_bounce     -> Preco toca banda inferior + RSI < rsiOversold (sobrevenda)
- *                     Operacao de reversao: entrada perto da banda inferior,
- *                     alvo na banda do meio (SMA20), stop abaixo da banda inferior.
- *
- *  2. bb_rejection  -> Preco toca banda superior + RSI > rsiOverbought (sobrecompra)
- *                     Sinal de cautela/venda: preco provavelmente reverte a media.
- *
- *  3. bb_breakout   -> Squeeze detectado + fechamento ACIMA da banda superior + RSI > 50
- *                     Rompimento altista apos contracao: tendencia forte.
- *
- *  4. bb_breakdown  -> Squeeze detectado + fechamento ABAIXO da banda inferior + RSI < 50
- *                     Rompimento baixista apos contracao: queda forte.
- *
- * Filtros de tendencia:
- *  - SMA50 > SMA200 (golden cross): contexto macro altista, favorece compras.
- *  - SMA50 < SMA200 (death cross):  contexto macro baixista, favorece vendas.
+ *  1. bb_bounce     -> Preco toca banda inferior + RSI < rsiOversold
+ *  2. bb_rejection  -> Preco toca banda superior + RSI > rsiOverbought
+ *  3. bb_breakout   -> Squeeze + fechamento ACIMA da banda superior + RSI > 50
+ *  4. bb_breakdown  -> Squeeze + fechamento ABAIXO da banda inferior + RSI < 50
  *
  * Pontuacao de confianca (0-100):
- *  - Toque na banda: ate 30 pts
- *  - Confluencia do RSI: ate 25 pts
- *  - Alinhamento de tendencia (preco vs SMA50): ate 25 pts
- *  - Cruzamento de MMAs (golden/death cross): ate 20 pts
+ *  - Toque na banda:          ate 30 pts
+ *  - Confluencia RSI:         ate 25 pts
+ *  - Alinhamento SMA50:       ate 25 pts
+ *  - Golden/Death Cross:      ate 20 pts
  */
 const generateSwingSignal = (
   lastClose: number,
@@ -171,12 +195,16 @@ const generateSwingSignal = (
   rsi1d: number | null,
   settings: SettingsState
 ): { side: SignalSide; type: SignalType; confidence: number } => {
-  const neutral = { side: 'neutral' as SignalSide, type: null as SignalType, confidence: 0 };
+  const neutral = {
+    side: 'neutral' as SignalSide,
+    type: null as SignalType,
+    confidence: 0,
+  };
   if (rsi1d === null) return neutral;
 
   const isSqueeze = bb.width < settings.squeezeThreshold;
 
-  // --- BB Squeeze Breakout (maior prioridade) ---
+  // BB Squeeze Breakout (maior prioridade)
   if (isSqueeze) {
     if (lastClose > bb.upper && rsi1d > 50) {
       const rsiBon = Math.min((rsi1d - 50) / 50, 1) * 25;
@@ -200,30 +228,38 @@ const generateSwingSignal = (
     }
   }
 
-  // --- BB Bounce Buy: preco na banda inferior + RSI sobrevenda ---
+  // BB Bounce Buy
   if (lastClose <= bb.lower * 1.015 && rsi1d < settings.rsiOversold) {
     const bandScore = lastClose <= bb.lower ? 30 : 15;
-    const rsiScore = Math.min((settings.rsiOversold - rsi1d) / settings.rsiOversold, 1) * 25;
-    const trendScore = sma50 && lastClose > sma50 ? 25 : 10; // acima da SMA50 = melhor qualidade
+    const rsiScore =
+      Math.min((settings.rsiOversold - rsi1d) / settings.rsiOversold, 1) * 25;
+    const trendScore = sma50 && lastClose > sma50 ? 25 : 10;
     const crossScore = sma50 && sma200 && sma50 > sma200 ? 20 : 0;
     return {
       side: 'buy',
       type: 'bb_bounce',
-      confidence: Math.round(Math.min(bandScore + rsiScore + trendScore + crossScore, 100)),
+      confidence: Math.round(
+        Math.min(bandScore + rsiScore + trendScore + crossScore, 100)
+      ),
     };
   }
 
-  // --- BB Rejection Sell: preco na banda superior + RSI sobrecompra ---
+  // BB Rejection Sell
   if (lastClose >= bb.upper * 0.985 && rsi1d > settings.rsiOverbought) {
     const bandScore = lastClose >= bb.upper ? 30 : 15;
     const rsiScore =
-      Math.min((rsi1d - settings.rsiOverbought) / (100 - settings.rsiOverbought), 1) * 25;
+      Math.min(
+        (rsi1d - settings.rsiOverbought) / (100 - settings.rsiOverbought),
+        1
+      ) * 25;
     const trendScore = sma50 && lastClose < sma50 ? 25 : 10;
     const crossScore = sma50 && sma200 && sma50 < sma200 ? 20 : 0;
     return {
       side: 'sell',
       type: 'bb_rejection',
-      confidence: Math.round(Math.min(bandScore + rsiScore + trendScore + crossScore, 100)),
+      confidence: Math.round(
+        Math.min(bandScore + rsiScore + trendScore + crossScore, 100)
+      ),
     };
   }
 
@@ -308,8 +344,6 @@ export const replaceMonitoredAssets = (
   return newAssets;
 };
 
-// --- Fetch Yahoo Finance ---
-
 const fetchQuote = async (ticker: string): Promise<YahooQuote | null> => {
   try {
     return await fetchYahooQuote(ticker);
@@ -330,8 +364,6 @@ const fetchBars = async (
     return [];
   }
 };
-
-// --- Compute por ativo ---
 
 const computeAsset = async (
   asset: AssetWithSignal | SupabaseAsset,
@@ -387,11 +419,15 @@ const computeAsset = async (
     is_squeeze: isSqueeze,
     price_vs_sma50:
       sma50 && lastPrice
-        ? lastPrice > sma50 ? 'above' : 'below'
+        ? lastPrice > sma50
+          ? 'above'
+          : 'below'
         : base.price_vs_sma50,
     price_vs_sma200:
       sma200 && lastPrice
-        ? lastPrice > sma200 ? 'above' : 'below'
+        ? lastPrice > sma200
+          ? 'above'
+          : 'below'
         : base.price_vs_sma200,
     distance_to_sma50:
       sma50 && lastPrice
@@ -405,8 +441,6 @@ const computeAsset = async (
     last_updated: now,
   };
 };
-
-// --- updateDashboardAssets ---
 
 export const updateDashboardAssets = async (
   _provider: SettingsState['dataProvider']
@@ -463,7 +497,9 @@ export const importAssets = (
   rows: Array<{ ticker: string; name: string; type: 'stock' | 'etf' }>
 ): AssetWithSignal[] => {
   let updated = getAssetsFromStorage();
-  rows.forEach((r) => { updated = addAsset(r.ticker, r.name, r.type); });
+  rows.forEach((r) => {
+    updated = addAsset(r.ticker, r.name, r.type);
+  });
   return updated;
 };
 
