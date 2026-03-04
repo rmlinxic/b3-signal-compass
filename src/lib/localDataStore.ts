@@ -21,6 +21,12 @@ const STORAGE_KEYS = {
   assets: 'b3.assets',
   settings: 'b3.settings',
   bars: 'b3.bars',
+  /**
+   * Conjunto de tickers adicionados manualmente pelo usuario.
+   * Esses ativos sao preservados mesmo quando a lista automatica e
+   * atualizada pelo fetchDailyTop50 ou replaceMonitoredAssets.
+   */
+  manualTickers: 'b3.manual_tickers',
 };
 
 export interface SettingsState {
@@ -84,6 +90,27 @@ export const saveSettings = (settings: SettingsState): void => {
 export const resetSettings = (): SettingsState => {
   saveSettings(DEFAULT_SETTINGS);
   return DEFAULT_SETTINGS;
+};
+
+// ---------------------------------------------------------------------------
+// Manual tickers registry
+// ---------------------------------------------------------------------------
+
+const getManualTickers = (): Set<string> => {
+  const raw = localStorage.getItem(STORAGE_KEYS.manualTickers);
+  if (!raw) return new Set();
+  try {
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+};
+
+const saveManualTickers = (tickers: Set<string>): void => {
+  localStorage.setItem(
+    STORAGE_KEYS.manualTickers,
+    JSON.stringify([...tickers])
+  );
 };
 
 // ---------------------------------------------------------------------------
@@ -295,14 +322,29 @@ const getAssetsFromStorage = (): AssetWithSignal[] => {
 
 export const getDashboardAssets = (): AssetWithSignal[] => getAssetsFromStorage();
 
+/**
+ * Substitui a lista automatica (top 50 por volume) preservando
+ * ativos adicionados manualmente pelo usuario.
+ */
 export const replaceMonitoredAssets = (
   stocks: Array<{ ticker: string; name: string; type: 'stock' | 'etf' }>
 ): AssetWithSignal[] => {
-  const newAssets = stocks.map((s, i) =>
-    createAssetWithSignal(s.ticker, s.name, s.type, i)
+  const manualTickers = getManualTickers();
+  const existingAssets = getAssetsFromStorage();
+
+  // Ativos manuais que nao estao na nova lista automatica
+  const normalizedNew = new Set(stocks.map((s) => s.ticker.toUpperCase()));
+  const manualExtras = existingAssets.filter(
+    (a) => manualTickers.has(a.ticker) && !normalizedNew.has(a.ticker)
   );
-  localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(newAssets));
-  return newAssets;
+
+  const autoAssets = stocks.map((s, i) =>
+    createAssetWithSignal(s.ticker.toUpperCase(), s.name, s.type, i)
+  );
+
+  const combined = [...autoAssets, ...manualExtras];
+  localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(combined));
+  return combined;
 };
 
 const fetchQuote = async (ticker: string): Promise<YahooQuote | null> => {
@@ -403,6 +445,12 @@ const computeAsset = async (
   };
 };
 
+/**
+ * Atualiza todos os ativos do dashboard:
+ * - Usa Supabase como fonte de verdade para a lista automatica
+ * - Sempre inclui os ativos adicionados manualmente pelo usuario
+ *   (armazenados em b3.manual_tickers) que nao estiverem no Supabase
+ */
 export const updateDashboardAssets = async (
   _provider: SettingsState['dataProvider']
 ): Promise<AssetWithSignal[]> => {
@@ -418,7 +466,20 @@ export const updateDashboardAssets = async (
     console.warn('[Supabase] Falha ao carregar assets, usando localStorage');
   }
 
-  const source = useSupabase ? supabaseAssets : getAssetsFromStorage();
+  let source: (AssetWithSignal | SupabaseAsset)[];
+
+  if (useSupabase) {
+    // Inclui ativos manuais que nao estao no Supabase
+    const manualTickers = getManualTickers();
+    const supabaseTickers = new Set(supabaseAssets.map((a) => a.ticker));
+    const localAssets = getAssetsFromStorage();
+    const manualExtras = localAssets.filter(
+      (a) => manualTickers.has(a.ticker) && !supabaseTickers.has(a.ticker)
+    );
+    source = [...supabaseAssets, ...manualExtras];
+  } else {
+    source = getAssetsFromStorage();
+  }
 
   const updated = await Promise.all(
     source.map((asset) => computeAsset(asset, settings, now))
@@ -438,6 +499,10 @@ export const refreshDashboardAssets = (
   provider: SettingsState['dataProvider']
 ): Promise<AssetWithSignal[]> => updateDashboardAssets(provider);
 
+/**
+ * Adiciona um ativo manualmente e o registra em b3.manual_tickers
+ * para que nao seja removido nas atualizacoes automaticas.
+ */
 export const addAsset = (
   ticker: string,
   name: string,
@@ -446,29 +511,40 @@ export const addAsset = (
   const existing = getAssetsFromStorage();
   const norm = ticker.toUpperCase();
   if (existing.some((a) => a.ticker === norm)) return existing;
+
   const next = [
     ...existing,
     createAssetWithSignal(norm, name, type, existing.length),
   ];
   localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(next));
+
+  // Registra como ativo manual
+  const manualTickers = getManualTickers();
+  manualTickers.add(norm);
+  saveManualTickers(manualTickers);
+
   return next;
 };
 
 /**
- * Remove um ativo da lista de monitoramento pelo ticker.
+ * Remove um ativo da lista e do registro de manuais.
  */
 export const removeAsset = (ticker: string): AssetWithSignal[] => {
+  const norm = ticker.toUpperCase();
   const existing = getAssetsFromStorage();
-  const updated = existing.filter(
-    (a) => a.ticker !== ticker.toUpperCase()
-  );
+  const updated = existing.filter((a) => a.ticker !== norm);
   localStorage.setItem(STORAGE_KEYS.assets, JSON.stringify(updated));
+
+  const manualTickers = getManualTickers();
+  manualTickers.delete(norm);
+  saveManualTickers(manualTickers);
+
   return updated;
 };
 
 /**
  * Busca cotacao e recalcula indicadores para um unico ativo,
- * salvando o resultado no localStorage. Util apos adicionar um ativo.
+ * salvando o resultado no localStorage.
  */
 export const refreshSingleAsset = async (
   ticker: string

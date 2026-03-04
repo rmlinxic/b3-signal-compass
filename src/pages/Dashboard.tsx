@@ -4,8 +4,9 @@ import { AssetTable } from '@/components/dashboard/AssetTable';
 import { DashboardFiltersBar } from '@/components/dashboard/DashboardFiltersBar';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
 import { DashboardFilters, SortConfig, AssetWithSignal } from '@/types/market';
-import { RefreshCw, Clock, TrendingUp, Timer } from 'lucide-react';
+import { RefreshCw, Clock, TrendingUp, Timer, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   getDashboardAssets,
   getSettings,
@@ -52,20 +53,17 @@ const Dashboard = () => {
   const [isDailyInit, setIsDailyInit] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  // Countdown em segundos ate a proxima atualizacao automatica
   const [countdownSec, setCountdownSec] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Ref para permitir reset do countdown a partir de qualquer lugar
   const countdownRef = useRef(0);
   const intervalIdRef = useRef<number | null>(null);
 
   // ---------------------------------------------------------------------------
-  // Core refresh function
+  // Core refresh
   // ---------------------------------------------------------------------------
   const doRefresh = useCallback(async () => {
     const settings = getSettings();
-    // Reinicia o countdown
     const totalSec = settings.updateInterval * 60;
     countdownRef.current = totalSec;
     setCountdownSec(totalSec);
@@ -85,11 +83,10 @@ const Dashboard = () => {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Inicializacao: lista diaria + primeiro fetch
+  // Inicializacao
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const init = async () => {
-      // Exibe cache imediatamente
       setAssets(getDashboardAssets());
 
       try {
@@ -113,7 +110,7 @@ const Dashboard = () => {
   }, [doRefresh]);
 
   // ---------------------------------------------------------------------------
-  // Tick a cada 1 segundo: decrementa countdown e dispara refresh quando chega 0
+  // Tick 1s: countdown + auto-refresh
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const settings = getSettings();
@@ -127,11 +124,9 @@ const Dashboard = () => {
 
       if (countdownRef.current <= 0) {
         const s = getSettings();
-        // Reseta o countdown imediatamente para evitar multiplos disparos
         countdownRef.current = s.updateInterval * 60;
         setCountdownSec(countdownRef.current);
 
-        // Refresh silencioso (sem spinner bloqueante)
         refreshDashboardAssets(s.dataProvider)
           .then((updated) => {
             setAssets(updated);
@@ -148,14 +143,13 @@ const Dashboard = () => {
 
     intervalIdRef.current = window.setInterval(tick, 1000);
     return () => {
-      if (intervalIdRef.current !== null) {
+      if (intervalIdRef.current !== null)
         window.clearInterval(intervalIdRef.current);
-      }
     };
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Refresh manual
+  // Manual refresh
   // ---------------------------------------------------------------------------
   const handleRefresh = async () => {
     if (isRefreshing || isDailyInit) return;
@@ -163,7 +157,7 @@ const Dashboard = () => {
   };
 
   // ---------------------------------------------------------------------------
-  // Filtragem e ordenacao
+  // Sort + filter + search
   // ---------------------------------------------------------------------------
   const sortedAssets = useMemo(() => {
     if (!sortConfig) return assets;
@@ -182,14 +176,25 @@ const Dashboard = () => {
     });
   }, [assets, sortConfig]);
 
+  const displayedAssets = useMemo(() => {
+    const q = searchQuery.trim().toUpperCase();
+    if (!q) return sortedAssets;
+    return sortedAssets.filter(
+      (a) =>
+        a.ticker.includes(q) ||
+        a.name.toUpperCase().includes(q)
+    );
+  }, [sortedAssets, searchQuery]);
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
   const isUrgent = countdownSec <= 30 && countdownSec > 0;
+  const hasSearch = searchQuery.trim().length > 0;
 
   return (
     <MainLayout>
-      <div className="space-y-6 animate-slide-up">
+      <div className="space-y-5 animate-slide-up">
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -204,33 +209,26 @@ const Dashboard = () => {
             {isDailyInit && (
               <div className="flex items-center gap-2 text-xs text-blue-500 animate-pulse">
                 <TrendingUp className="h-3 w-3" />
-                <span>Atualizando lista de ativos...</span>
+                <span>Atualizando lista...</span>
               </div>
             )}
 
-            {/* Ultima atualizacao */}
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />
               <span>{lastUpdate.toLocaleTimeString('pt-BR')}</span>
             </div>
 
-            {/* Countdown */}
             <div
               className={`flex items-center gap-1.5 text-xs font-mono ${
-                isUrgent
-                  ? 'text-signal-buy animate-pulse'
-                  : 'text-muted-foreground'
+                isUrgent ? 'text-signal-buy animate-pulse' : 'text-muted-foreground'
               }`}
             >
               <Timer className="h-3 w-3" />
               <span>
-                {isRefreshing
-                  ? 'Atualizando...'
-                  : `prox. ${fmtCountdown(countdownSec)}`}
+                {isRefreshing ? 'Atualizando...' : `prox. ${fmtCountdown(countdownSec)}`}
               </span>
             </div>
 
-            {/* Botao manual */}
             <Button
               variant="outline"
               size="sm"
@@ -238,9 +236,7 @@ const Dashboard = () => {
               disabled={isRefreshing || isDailyInit}
             >
               <RefreshCw
-                className={`h-4 w-4 mr-2 ${
-                  isRefreshing ? 'animate-spin' : ''
-                }`}
+                className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`}
               />
               Atualizar
             </Button>
@@ -258,8 +254,42 @@ const Dashboard = () => {
 
         <DashboardStats assets={assets} />
         <DashboardFiltersBar filters={filters} onFiltersChange={setFilters} />
+
+        {/* Barra de busca */}
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder="Buscar ticker ou empresa... (ex: PETR4, Petrobras)"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 pr-9 h-9"
+            />
+            {hasSearch && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {hasSearch && (
+            <p className="text-xs text-muted-foreground shrink-0">
+              {displayedAssets.length === 0
+                ? 'Nenhum resultado'
+                : `${displayedAssets.length} ativo${
+                    displayedAssets.length !== 1 ? 's' : ''
+                  } encontrado${
+                    displayedAssets.length !== 1 ? 's' : ''
+                  }`}
+            </p>
+          )}
+        </div>
+
         <AssetTable
-          assets={sortedAssets}
+          assets={displayedAssets}
           filters={filters}
           onSort={setSortConfig}
           sortConfig={sortConfig}
