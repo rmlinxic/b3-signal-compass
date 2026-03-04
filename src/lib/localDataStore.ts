@@ -329,7 +329,6 @@ const computeAsset = async (
     signal_side: signal.side,
     confidence: signal.confidence,
     last_updated: now,
-    updated_at: now,
   };
 };
 
