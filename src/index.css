@@ -56,6 +56,7 @@
     --chart-candle-down: 0 72% 51%;
     --chart-bb: 199 89% 48%;
     --chart-sma: 280 65% 60%;
+    --chart-sma200: 25 95% 53%;
     --chart-rsi: 45 93% 47%;
     --chart-grid: 220 15% 15%;
 
@@ -117,6 +118,7 @@
     --chart-candle-down: 0 72% 51%;
     --chart-bb: 199 89% 48%;
     --chart-sma: 280 65% 60%;
+    --chart-sma200: 25 95% 53%;
     --chart-rsi: 45 93% 47%;
     --chart-grid: 210 15% 90%;
 

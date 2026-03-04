@@ -63,21 +63,18 @@ const SIGNAL_TYPE_DESC: Record<
 };
 
 // ---------------------------------------------------------------------------
-// Helpers de calculo — isolados fora do componente para evitar re-criacao
+// Helpers
 // ---------------------------------------------------------------------------
 
 /**
  * Constroi a serie de dados para o grafico de preco.
- * Inclui BB(20,2), SMA20 (media central da BB), SMA50 e SMA200.
+ * Inclui o campo `timestamp` (ISO completo) para o tooltip interativo.
  */
-const buildChartData = (
-  bars: Bar[],
-  timeFmt: (ts: string) => string
-) =>
+const buildChartData = (bars: Bar[], timeFmt: (ts: string) => string) =>
   bars.map((bar, idx) => {
     const closes = bars.slice(0, idx + 1).map((b) => b.close);
 
-    // BB(20,2)
+    // BB(20,2) — variancia populacional
     const bbSlice = closes.slice(-20);
     const sma20 =
       bbSlice.length > 0
@@ -86,8 +83,7 @@ const buildChartData = (
     const std =
       bbSlice.length > 1
         ? Math.sqrt(
-            bbSlice.reduce((acc, c) => acc + (c - sma20) ** 2, 0) /
-              bbSlice.length
+            bbSlice.reduce((acc, c) => acc + (c - sma20) ** 2, 0) / bbSlice.length
           )
         : 0;
 
@@ -102,6 +98,7 @@ const buildChartData = (
 
     return {
       time: timeFmt(bar.timestamp),
+      timestamp: bar.timestamp,
       open: bar.open,
       high: bar.high,
       low: bar.low,
@@ -116,15 +113,7 @@ const buildChartData = (
   });
 
 /**
- * RSI de Wilder — identico ao TradingView.
- *
- * 1. Calcula todas as variacoes barra a barra.
- * 2. Seed com media simples dos primeiros `period` movimentos.
- * 3. Suavizacao de Wilder:
- *      avgGain = (avgGain * (period-1) + gain) / period
- *      avgLoss = (avgLoss * (period-1) + loss) / period
- * 4. RSI = 100 - 100 / (1 + avgGain/avgLoss)
- *
+ * RSI de Wilder (identico ao TradingView).
  * Retorna a serie completa de {time, rsi} a partir da barra `period`.
  */
 const calcRSI = (
@@ -135,13 +124,11 @@ const calcRSI = (
   const out: { time: string; rsi: number }[] = [];
   if (bars.length < period + 1) return out;
 
-  // Variacoes barra a barra
   const changes: number[] = [];
   for (let i = 1; i < bars.length; i++) {
     changes.push(bars[i].close - bars[i - 1].close);
   }
 
-  // Seed: media simples dos primeiros `period` movimentos
   let avgGain = 0;
   let avgLoss = 0;
   for (let i = 0; i < period; i++) {
@@ -151,12 +138,9 @@ const calcRSI = (
   avgGain /= period;
   avgLoss /= period;
 
-  // Primeiro valor RSI (barra no indice `period`)
-  const firstRsi =
-    avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  const firstRsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
   out.push({ time: timeFmt(bars[period].timestamp), rsi: firstRsi });
 
-  // Suavizacao de Wilder para as barras restantes
   for (let i = period; i < changes.length; i++) {
     const gain = changes[i] > 0 ? changes[i] : 0;
     const loss = changes[i] < 0 ? -changes[i] : 0;
@@ -214,10 +198,7 @@ const AssetDetail = () => {
   }, [asset?.id, asset?.ticker]);
 
   const fmtDay = (ts: string) =>
-    new Date(ts).toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-    });
+    new Date(ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   const fmtWeek = (ts: string) =>
     new Date(ts).toLocaleDateString('pt-BR', {
       day: '2-digit',
@@ -225,14 +206,8 @@ const AssetDetail = () => {
       year: '2-digit',
     });
 
-  const chartData1d = useMemo(
-    () => buildChartData(bars1d, fmtDay),
-    [bars1d]
-  );
-  const chartData1wk = useMemo(
-    () => buildChartData(bars1wk, fmtWeek),
-    [bars1wk]
-  );
+  const chartData1d = useMemo(() => buildChartData(bars1d, fmtDay), [bars1d]);
+  const chartData1wk = useMemo(() => buildChartData(bars1wk, fmtWeek), [bars1wk]);
   const rsiData1d = useMemo(() => calcRSI(bars1d, fmtDay), [bars1d]);
   const rsiData1wk = useMemo(() => calcRSI(bars1wk, fmtWeek), [bars1wk]);
 
@@ -241,9 +216,7 @@ const AssetDetail = () => {
       <MainLayout>
         <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
           <h1 className="text-2xl font-bold">Ativo nao encontrado</h1>
-          <p className="text-muted-foreground">
-            O ticker "{ticker}" nao foi encontrado.
-          </p>
+          <p className="text-muted-foreground">O ticker "{ticker}" nao foi encontrado.</p>
           <Button asChild>
             <Link to="/">
               <ArrowLeft className="h-4 w-4 mr-2" />
@@ -255,13 +228,15 @@ const AssetDetail = () => {
     );
   }
 
-  const signalInfo = asset.signal_type
-    ? SIGNAL_TYPE_DESC[asset.signal_type]
-    : null;
+  const signalInfo = asset.signal_type ? SIGNAL_TYPE_DESC[asset.signal_type] : null;
 
-  const PriceChart = ({ data }: { data: ReturnType<typeof buildChartData> }) => (
-    <CandlestickChart data={data} height={420} />
-  );
+  const PriceChart = ({
+    data,
+    tf,
+  }: {
+    data: ReturnType<typeof buildChartData>;
+    tf: '1d' | '1wk';
+  }) => <CandlestickChart data={data} height={420} timeframe={tf} />;
 
   const RSIChart = ({ data }: { data: { time: string; rsi: number }[] }) => (
     <div className="h-[160px]">
@@ -297,14 +272,24 @@ const AssetDetail = () => {
             stroke="hsl(var(--signal-sell))"
             strokeDasharray="3 3"
             strokeOpacity={0.7}
-            label={{ value: '60', position: 'right', fontSize: 9, fill: 'hsl(var(--signal-sell))' }}
+            label={{
+              value: '60',
+              position: 'right',
+              fontSize: 9,
+              fill: 'hsl(var(--signal-sell))',
+            }}
           />
           <ReferenceLine
             y={45}
             stroke="hsl(var(--signal-buy))"
             strokeDasharray="3 3"
             strokeOpacity={0.7}
-            label={{ value: '45', position: 'right', fontSize: 9, fill: 'hsl(var(--signal-buy))' }}
+            label={{
+              value: '45',
+              position: 'right',
+              fontSize: 9,
+              fill: 'hsl(var(--signal-buy))',
+            }}
           />
           <ReferenceLine
             y={50}
@@ -369,9 +354,7 @@ const AssetDetail = () => {
             <p
               className={cn(
                 'text-sm font-medium flex items-center justify-end gap-1',
-                asset.price_change_pct >= 0
-                  ? 'text-signal-buy'
-                  : 'text-signal-sell'
+                asset.price_change_pct >= 0 ? 'text-signal-buy' : 'text-signal-sell'
               )}
             >
               {asset.price_change_pct >= 0 ? (
@@ -451,9 +434,7 @@ const AssetDetail = () => {
                 <span
                   className={cn(
                     'text-sm font-medium',
-                    asset.price_vs_sma50 === 'above'
-                      ? 'text-signal-buy'
-                      : 'text-signal-sell'
+                    asset.price_vs_sma50 === 'above' ? 'text-signal-buy' : 'text-signal-sell'
                   )}
                 >
                   {asset.price_vs_sma50 === 'above' ? 'Acima' : 'Abaixo'}
@@ -476,12 +457,12 @@ const AssetDetail = () => {
                 <span
                   className={cn(
                     'text-sm font-medium',
-                    asset.price_vs_sma200 === 'above'
-                      ? 'text-signal-buy'
-                      : 'text-signal-sell'
+                    asset.price_vs_sma200 === 'above' ? 'text-signal-buy' : 'text-signal-sell'
                   )}
                 >
-                  {asset.price_vs_sma200 === 'above' ? 'Acima' : 'Abaixo'}
+                  {asset.price_vs_sma200 === 'above'
+                    ? 'Acima (tendencia altista)'
+                    : 'Abaixo (tendencia baixista)'}
                 </span>
               </div>
             </CardContent>
@@ -511,12 +492,12 @@ const AssetDetail = () => {
                 <CardHeader>
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Activity className="h-4 w-4 text-primary" />
-                    Preco | BB(20,2) | SMA50 | SMA200
+                    Preco Diario &mdash; BB(20,2) &bull; SMA50 &bull; SMA200
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   {chartData1d.length > 0 ? (
-                    <PriceChart data={chartData1d} />
+                    <PriceChart data={chartData1d} tf="1d" />
                   ) : (
                     <p className="text-sm text-muted-foreground text-center py-8">
                       Sem dados disponiveis.
@@ -547,12 +528,12 @@ const AssetDetail = () => {
                 <CardHeader>
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Activity className="h-4 w-4 text-primary" />
-                    Preco Semanal | BB(20,2) | SMA50 | SMA200
+                    Preco Semanal &mdash; BB(20,2) &bull; SMA50 &bull; SMA200
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   {chartData1wk.length > 0 ? (
-                    <PriceChart data={chartData1wk} />
+                    <PriceChart data={chartData1wk} tf="1wk" />
                   ) : (
                     <p className="text-sm text-muted-foreground text-center py-8">
                       Sem dados disponiveis.
@@ -589,14 +570,9 @@ const AssetDetail = () => {
           <CardContent>
             <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <SignalBadge
-                  side={asset.signal_side}
-                  confidence={asset.confidence}
-                />
+                <SignalBadge side={asset.signal_side} confidence={asset.confidence} />
                 {signalInfo && (
-                  <span
-                    className={cn('text-sm font-medium', signalInfo.color)}
-                  >
+                  <span className={cn('text-sm font-medium', signalInfo.color)}>
                     {signalInfo.label}
                   </span>
                 )}
@@ -609,40 +585,31 @@ const AssetDetail = () => {
               )}
 
               <div className="border-t border-border pt-4">
-                <h4 className="text-sm font-medium mb-2">
-                  Condicoes identificadas:
-                </h4>
+                <h4 className="text-sm font-medium mb-2">Condicoes identificadas:</h4>
                 <ul className="space-y-2 text-sm text-muted-foreground">
                   <li className="flex items-start gap-2">
                     <span className="text-primary mt-1">&bull;</span>
                     BB Width: {asset.bb_width_1d?.toFixed(4) ?? 'N/A'}
                     {asset.is_squeeze && (
-                      <span className="ml-1 text-yellow-400 font-medium">
-                        (squeeze ativo)
-                      </span>
+                      <span className="ml-1 text-yellow-400 font-medium">(squeeze ativo)</span>
                     )}
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-primary mt-1">&bull;</span>
                     RSI Diario: {asset.rsi_1d?.toFixed(1) ?? 'N/A'}
-                    {(asset.rsi_1d ?? 50) < 45 &&
-                      ' — Sobrevenda (favoravel a compra)'}
-                    {(asset.rsi_1d ?? 50) > 60 &&
-                      ' — Sobrecompra (favoravel a venda/saida)'}
+                    {(asset.rsi_1d ?? 50) < 45 && ' — Sobrevenda (favoravel a compra)'}
+                    {(asset.rsi_1d ?? 50) > 60 && ' — Sobrecompra (favoravel a venda/saida)'}
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-primary mt-1">&bull;</span>
-                    RSI Semanal: {asset.rsi_1wk?.toFixed(1) ?? 'N/A'}{' '}
-                    (confirmacao de tendencia)
+                    RSI Semanal: {asset.rsi_1wk?.toFixed(1) ?? 'N/A'} (confirmacao de tendencia)
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-primary mt-1">&bull;</span>
                     Posicao vs SMA50:{' '}
                     {asset.price_vs_sma50 === 'above' ? 'Acima' : 'Abaixo'}
                     {asset.distance_to_sma50 !== null &&
-                      ` (${
-                        asset.distance_to_sma50 >= 0 ? '+' : ''
-                      }${asset.distance_to_sma50.toFixed(1)}%)`}
+                      ` (${asset.distance_to_sma50 >= 0 ? '+' : ''}${asset.distance_to_sma50.toFixed(1)}%)`}
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-primary mt-1">&bull;</span>
