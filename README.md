@@ -1,77 +1,36 @@
-# Welcome to your Lovable project
+# B3 Signal Compass
 
-## Project info
+Plataforma web para análise de ativos da B3 (Bolsa de Valores do Brasil). A aplicação consome dados de mercado em tempo real via BRAPI e apresenta indicadores técnicos e sinais de negociação em uma interface responsiva.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Stack
 
-## How can I edit this code?
+| Tecnologia | Papel |
+|---|---|
+| React 18 + TypeScript | Framework UI |
+| Vite | Bundler e servidor de desenvolvimento |
+| Tailwind CSS | Estilização utilitária |
+| shadcn/ui | Biblioteca de componentes |
+| BRAPI | API de dados de mercado (B3) |
 
-There are several ways of editing your application.
+## Configuração
 
-**Use Lovable**
+Crie um arquivo `.env` na raiz do projeto com a seguinte variável:
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+```env
+VITE_BRAPI_TOKEN=seu_token_brapi
+```
 
-Changes made via Lovable will be committed automatically to this repo.
+Obtenha sua chave em [brapi.dev](https://brapi.dev).
 
-**Use your preferred IDE**
+## Execução local
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
+npm install
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+A aplicação estará disponível em `http://localhost:5173`.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Deploy
 
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## Configuração da BRAPI
-
-Para usar a BRAPI, defina a variável `VITE_BRAPI_TOKEN` no arquivo `.env` com a sua chave. O app já está pronto para consumir a API assim que a chave for informada.
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+O build estático é gerado com `npm run build` e pode ser servido por qualquer CDN ou hospedagem estática. O projeto está configurado com GitHub Pages.
